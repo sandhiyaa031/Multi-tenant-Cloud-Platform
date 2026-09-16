@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# DBPilot Ignored Data
+dataset/
+backend/.env
+frontend/node_modules/
+results/*/system_metrics.csv
+results/*/diagnostic*.txt

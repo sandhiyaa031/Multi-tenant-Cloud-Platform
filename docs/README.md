@@ -112,7 +112,7 @@ The next major architectural step is to expand DBPilot into the cloud via **Tena
 **Docker-based isolated analytical worker:**
 The immediate next step is building the actual isolated worker instance. This implies creating a separate Docker container explicitly capped by CPU and Memory limits that independently claims analytical jobs from the asynchronous queue. Tracking the full job lifecycle (Pending -> Running -> Complete) via isolated system resources will definitively prove Cloud elasticity.
 
-**Kubernetes: optional future extension:**
+**Kubernetes**
 Kubernetes might become useful if this project eventually scales to require managing hundreds of these isolated workers across physical server nodes, balancing autoscaling, and executing complex failure recovery. It is strictly an overkill extension and is not required for the current isolation proof.
 
 ### 13. Limitations
@@ -123,4 +123,4 @@ Kubernetes might become useful if this project eventually scales to require mana
 - **Cloud Unfinished**: The tenant-aware Docker routing execution has not yet been robustly evaluated.
 
 ### 14. Conclusion
-DBPilot successfully proved that allowing unconstrained heavy queries to operate natively alongside fast queries absolutely destroys multi-tenant performance SLAs. By building a middleware telemetry engine and applying the Adaptive Controller (B2), the system demonstrated it could actively reduce interactive latency violations by 82% (down to 1.02%) while aggressively raising overall system throughput because the database Engine was saved from constant locking and thrashing. 
+It proved that allowing unconstrained heavy queries to operate natively alongside fast queries destroys multi-tenant performance SLAs. By building a middleware telemetry engine and applying the Adaptive Controller (B2), the system demonstrated it could actively reduce interactive latency violations by 82% (down to 1.02%) while raising overall system throughput because the database Engine was saved from constant locking and thrashing. 

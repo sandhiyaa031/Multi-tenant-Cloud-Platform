@@ -10,3 +10,7 @@ PyJWT>=2.8.0
 python-dotenv>=1.0.0
 numpy>=1.26.0
 aiohttp>=3.9.0
+# Phase 1 — Predictive Cost Correction
+scikit-learn>=1.4.0
+# Phase 2 — Elastic Worker Tier (pool controller)
+docker>=7.0.0

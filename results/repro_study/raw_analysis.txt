@@ -1,0 +1,109 @@
+
+============================================================
+MODE: B0
+============================================================
+
+  run_A: N=993
+  P50=0.729ms  P95=2.039ms  P99=7.583ms  Max=27.833ms
+  Mean=0.886ms  Std=1.922ms
+  Violations: 63 / 993 = 6.3444%
+  Requests >5ms:  11
+  Requests >10ms: 9
+  Requests >20ms: 3
+  Requests >50ms: 0
+  P99-tail values (10 items): [8.155, 10.414, 12.565, 16.21, 16.372, 16.919, 18.697, 20.36, 26.194, 27.833]
+
+  run_B: N=981
+  P50=0.0ms  P95=2.058ms  P99=3.264ms  Max=30.024ms
+  Mean=0.692ms  Std=1.533ms
+  Violations: 68 / 981 = 6.9317%
+  Requests >5ms:  8
+  Requests >10ms: 5
+  Requests >20ms: 1
+  Requests >50ms: 0
+  P99-tail values (10 items): [3.588, 3.676, 5.148, 6.616, 7.699, 10.937, 15.247, 15.928, 16.988, 30.024]
+
+  CROSS-RUN COMPARISON:
+  N:          A=993  B=981  delta=12
+  P99 diff:   4.319ms (57.0%)
+  Viol count: A=63  B=68  delta=-5
+  Viol rate:  A=6.3444%  B=6.9317%
+  P99 = worst 9 reqs (A) / 9 reqs (B) out of 993/981
+
+============================================================
+MODE: B1
+============================================================
+
+  run_A: N=999
+  P50=0.883ms  P95=1.64ms  P99=3.505ms  Max=16.346ms
+  Mean=0.882ms  Std=1.026ms
+  Violations: 29 / 999 = 2.9029%
+  Requests >5ms:  10
+  Requests >10ms: 3
+  Requests >20ms: 0
+  Requests >50ms: 0
+  P99-tail values (10 items): [5.119, 6.071, 6.515, 6.628, 7.608, 8.006, 9.303, 10.589, 13.533, 16.346]
+
+  run_B: N=1024
+  P50=0.869ms  P95=1.571ms  P99=3.692ms  Max=18.294ms
+  Mean=0.882ms  Std=0.977ms
+  Violations: 22 / 1024 = 2.1484%
+  Requests >5ms:  5
+  Requests >10ms: 2
+  Requests >20ms: 0
+  Requests >50ms: 0
+  P99-tail values (11 items): [3.701, 3.737, 3.964, 4.272, 4.888, 4.899, 6.931, 7.258, 7.714, 16.509, 18.294]
+
+  CROSS-RUN COMPARISON:
+  N:          A=999  B=1024  delta=-25
+  P99 diff:   0.187ms (5.3%)
+  Viol count: A=29  B=22  delta=7
+  Viol rate:  A=2.9029%  B=2.1484%
+  P99 = worst 9 reqs (A) / 10 reqs (B) out of 999/1024
+
+============================================================
+MODE: B2
+============================================================
+
+  run_A: N=992
+  P50=0.766ms  P95=1.433ms  P99=2.237ms  Max=16.792ms
+  Mean=0.753ms  Std=0.775ms
+  Violations: 15 / 992 = 1.5121%
+  Requests >5ms:  5
+  Requests >10ms: 1
+  Requests >20ms: 0
+  Requests >50ms: 0
+  P99-tail values (10 items): [2.321, 2.756, 2.792, 3.044, 4.527, 5.321, 5.615, 6.294, 6.505, 16.792]
+
+  run_B: N=1013
+  P50=0.707ms  P95=1.217ms  P99=1.977ms  Max=4.142ms
+  Mean=0.679ms  Std=0.44ms
+  Violations: 11 / 1013 = 1.0859%
+  Requests >5ms:  0
+  Requests >10ms: 0
+  Requests >20ms: 0
+  Requests >50ms: 0
+  P99-tail values (11 items): [2.008, 2.209, 2.429, 2.554, 2.585, 2.59, 2.644, 2.779, 2.939, 3.477, 4.142]
+
+  CROSS-RUN COMPARISON:
+  N:          A=992  B=1013  delta=-21
+  P99 diff:   0.260ms (11.6%)
+  Viol count: A=15  B=11  delta=4
+  Viol rate:  A=1.5121%  B=1.0859%
+  P99 = worst 9 reqs (A) / 10 reqs (B) out of 992/1013
+
+============================================================
+B2 CONTROLLER TRACE COMPARISON
+============================================================
+
+  run_A: 15 intervals
+  target sequence: [5, 6, 6, 6, 6, 7, 5, 3, 1, 1, 2, 3, 4, 5, 3]
+  viol_rate seq:   [0.0, 1.49, 1.0, 1.0, 0.0, 2.0, 4.0, 7.0, 4.0, 0.0, 0.0, 0.0, 0.0, 2.0, 2.0]
+  scale events: 10
+  target min=1 max=7 final=3
+
+  run_B: 15 intervals
+  target sequence: [3, 3, 3, 4, 4, 2, 1, 1, 1, 2, 2, 1, 1, 2, 3]
+  viol_rate seq:   [1.49, 1.0, 0.0, 1.0, 2.0, 3.0, 2.0, 1.0, 0.0, 1.0, 3.0, 1.0, 0.0, 0.0, 0.0]
+  scale events: 7
+  target min=1 max=4 final=3

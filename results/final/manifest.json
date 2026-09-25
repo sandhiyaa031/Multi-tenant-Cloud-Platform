@@ -1,0 +1,14 @@
+{
+  "git_commit": "97997cb2e2c54ec8ad23c911e0f335668363a8fe",
+  "git_dirty": true,
+  "pg_version": "18.1",
+  "pg_shared_buffers": "128MB",
+  "dataset_table": "research.ctu_conn_log",
+  "dataset_row_count": 4924496,
+  "seed": 42,
+  "python_version": "3.12.3 (tags/v3.12.3:f6650f9, Apr  9 2024, 14:05:25) [MSC v.1938 64 bit (AMD64)]",
+  "timestamp_utc": "2026-09-25T08:46:15Z",
+  "cli_invocation": "python scripts/run_all_experiments.py",
+  "inter_scenario_prewarm_seconds": 15,
+  "reproducibility_note": "random.seed(42) is set globally. P50/P95 use \u00b10.5 ms absolute OR \u00b110% relative. SLO violation rate is gated \u00b11 pp absolute. TPS is \u00b115%. P99 is reported but not gated."
+}

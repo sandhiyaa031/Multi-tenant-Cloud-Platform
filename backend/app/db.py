@@ -34,8 +34,8 @@ async def get_tenant_connection(tenant_id: str) -> AsyncGenerator[psycopg.AsyncC
     """
     async with pool.connection() as conn:
         async with conn.transaction():
-            await conn.execute(f"SET ROLE {DB_ROLE};")
-            await conn.execute("SELECT set_config('app.tenant_id', %s, true);", (tenant_id,))
+            await conn.execute(f"SET LOCAL ROLE {DB_ROLE};")
+            await conn.execute("SELECT set_config('app.tenant_id', %s, true);", (str(tenant_id),))
             yield conn
 
 async def get_raw_connection() -> AsyncGenerator[psycopg.AsyncConnection, None]:

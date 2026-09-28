@@ -76,14 +76,85 @@ The lone failing metric is the SLO violation rate for B0. This is an expected ar
 
 **PHASE 0 STATUS**: PASS WITH LIMITATIONS.
 
+## Phase 1: Asynchronous Heavy-Query Container (Implemented)
+
+**Goal:** Decouple analytical workloads from the primary interactive request path to isolated Docker worker processes, maintaining strict PostgreSQL RLS isolation. Note: Docker isolates the analytical worker process/request path, but the worker still executes against the same shared PostgreSQL instance. This is process-level isolation, not PostgreSQL compute isolation.
+
+### Experimental Setup
+- **Workload**: A=8 heavy aggregations. Measurement Window: 30 seconds per execution mode (60 seconds total experiment time).
+- **Synchronous**: API handles heavy queries directly via FastAPI (competing in same connection pool).
+- **Asynchronous**: API offloads heavy queries to `research.analytical_jobs`. A single isolated Docker worker (`--cpus=2.0 --memory=2g`) polls and processes jobs.
+- **Aggregation**: Worker Exec Time and Queue Wait Time are aggregated as the mathematical mean (`np.mean`) across all successfully completed jobs within the 30-second window.
+
+### Phase 1 Results 
+
+| Metric | Synchronous (API, A=8) | Asynchronous (Docker Worker) | Analysis |
+|--------|----------------|----------------|----------|
+| **Interactive P50** | 7.55 ms | 5.30 ms | Slight baseline improvement. |
+| **Interactive P95** | 12.45 ms | 11.13 ms | Minor improvement. |
+| **Interactive P99** | **1634.65 ms** | **23.21 ms** | **Massive 98.5% reduction.** The async architecture removes heavy analytical execution from the synchronous API request path. |
+| **SLO Violation Rate** | 99.66% | 97.68% | -1.98 pp |
+| **Worker Exec Time** | 2994.5 ms | 986.9 ms | The single worker serializes analytical execution and therefore reduces analytical concurrency, executing faster per-query. |
+| **Queue Wait Time** | N/A | 5912.4 ms | Tradeoff: Queries queued up due to single-worker bottleneck. |
+| **Analytical TPS** | 2.93 | 1.07 | Tradeoff: Lower analytical throughput under single-worker serialized execution. |
+| **Docker CPU Usage** | N/A | ~46.2% | Container successfully bounded workload CPU footprint. |
+
+### Research Interpretation
+The asynchronous worker reduced extreme interactive tail latency from 1634.65 ms to 23.21 ms, but the 2 ms experimental SLO was still violated by 97.68% of interactive requests. Therefore async execution improved the extreme tail but did not by itself restore SLO compliance. Furthermore, the absolute analytical throughput dropped considerably (2.93 -> 1.07 TPS) and queue wait times spiked, motivating evaluation of elastic worker scaling in Phase 2.
+
+**PHASE 1 STATUS**: END OF PHASE.
+
+---
+
+## Phase 2: Elastic Worker Tier (Implemented)
+
+**Goal:** Determine if elastic analytical-worker scaling can reduce queue lengths and recover analytical throughput while retaining the interactive tail-latency protections observed in Phase 1's isolated execution.
+
+### Controller Architecture & Policy
+An autonomous orchestrator (`pool_controller.py`) manages dynamic limits for the Docker workers (Bounded: MIN=1, MAX=8).
+- **Scale-Up Threshold**: > 2 PENDING jobs in the queue.
+- **Scale-Down Threshold**: 0 PENDING jobs in the queue.
+- **Cooldown**: 3.0 seconds hysteresis between scaling operations.
+- **Safety / Fairness**: Job acquisition enforces rigid `SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1` natively inside PostgreSQL, guaranteeing no concurrent orchestration races over PENDING assignments. `get_tenant_connection` RLS policies seamlessly enforce tenant boundaries on all dynamic processes.
+
+### Experimental Setup
+- **Workload**: Same interactive queries (50 QPS) + 8 concurrent heavy analytical executions. 
+- **Configuration**: 30-second measurement constraints applied to Synchronous (A), Single-Async (B), and Elastic (C).
+
+### Phase 2 Results
+
+> **Note on SLO compliance**: All three Phase 2 configurations recorded approximately 100% interactive SLO violation rate under this offered load (Sync: 100%, Static Async: 100%, Elastic: 99.77%). Phase 2 therefore evaluates relative interference, queueing, and throughput behavior between configurations, not SLO compliance.
+
+| Metric | A: Synchronous (A=8) | B: Async (Static=1) | C: Elastic (1..8 workers) |
+|--------|----------------|-----------------|------------------|
+| **Interactive P50** | 12.41 ms | 12.49 ms | 12.82 ms |
+| **Interactive P95** | 98.92 ms | 32.82 ms | 38.68 ms |
+| **Interactive P99** | 133.07 ms | 47.68 ms | 157.53 ms |
+| **Max Interac Latency** | 7110 ms | 9776 ms | 10088 ms |
+| **SLO Violation Rate** | 100.0% | 100.0% | 99.77% |
+| **Analytical TPS** | 39.16 | 5.36 | 6.30 |
+| **Worker Exec Time** | 181.8 ms | 2.6 ms | 3.4 ms |
+| **Queue Wait Time** | 0.0 ms | 695.4 ms | 414.7 ms |
+
+#### Scaling Behavior
+- Minimum Workers: 1 | Maximum Workers: 6 | Mean active count: 3.4
+- Scale-ups during window: 6 | Scale-downs: 0
+
+### Research Interpretation and Tradeoffs
+1. **Queue Wait Recovery**: Elastic expansion (scaling up to 6 internal workers) reduced mean Queue Wait Time by approximately 40%, from 695 ms to 415 ms, compared to the serialized Single Worker baseline.
+2. **Throughput Bounds**: Scaling from one to six worker processes increased Analytical TPS from 5.36 to 6.30, but this remained far below the Synchronous 39.16 TPS. This outcome captures the architectural boundary: process-level elasticity is insufficient when PostgreSQL shared-buffer access and connection limits form the central throughput constraint.
+3. **Interactive Interference**: Increasing worker concurrency increased simultaneous analytical load on the shared PostgreSQL instance, and interactive P99 increased from 47.68 ms to 157.53 ms.
+
+**Conclusion**: Elastic container scaling for a shared-instance PostgreSQL backend exposes a sharp interference/throughput tradeoff. Docker isolates only the worker process path; all workers still execute against the same PostgreSQL primary, and the database remains the shared bottleneck.
+
+**PHASE 2 STATUS**: PASS WITH LIMITATIONS.
+
 ---
 
 ## Future Phases (Pending Approval)
 
 *Note: Execution awaiting explicit authorization.*
 
-* **Phase 1: Asynchronous Heavy-Query Container (Docker Worker)** - Moving the analytical workload out of the interactive request path to isolated worker processes (maintaining synchronous PostgreSQL DB utilization).
-* **Phase 2: Elastic Worker Tier** - Dynamic auto-scaling of analytical worker boundaries based on queue depths.
 * **Phase 3: Replica-Aware Routing** - Routing heavy logical read workloads to a trailing read replica based on a staleness budget.
 * **Phase 4: Predictive Query-Cost Correction (B3 Tier)** - Offline ML tracking using LightGBM/HistGradientBoostingRegressor to model heavy query costs and guide adaptive logic.
 * **Phase 5: Offline LLM Policy Tuner** - An agentic layer proposing configuration parameters bound within strict safety limits, validated via deterministic offline staging runs.

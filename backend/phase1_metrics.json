@@ -1,0 +1,1 @@
+{"sync": {"p50": 0, "p95": 0, "p99": 0, "slo_viol": 0.0, "ana_tps": 0.0, "ana_exec_ms": 0}, "async": {"p50": 0, "p95": 0, "p99": 0, "slo_viol": 0.0, "ana_tps": 0.0, "q_wait_ms": 0, "exec_ms": 0, "tot_lat_ms": 0, "docker_cpu_pct": 0.10555555555555556}}

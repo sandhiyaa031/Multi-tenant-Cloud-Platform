@@ -263,7 +263,7 @@ async def submit_analytical_job(
                 ''', (tenant_id, workload_type, 'OFFLOADED' if hours>24 else routing_decision))
                 
                 job_id = (await cur.fetchone())[0]
-                await conn.commit()
+                # transaction() block handles commit automatically
                 
         if routing_decision == "OFFLOADED":
             return {
@@ -273,8 +273,6 @@ async def submit_analytical_job(
                 "message": f"Query cost too high. Isolated compute container provisioning..."
             }
         else:
-            # Here we might synchronously run it, but for architecture purity, 
-            # we just notify it's in the shared queue vs isolated queue.
             return {
                 "status": "ACCEPTED", 
                 "routing_decision": routing_decision, 
@@ -283,6 +281,8 @@ async def submit_analytical_job(
             }
         
     except Exception as e:
+        print("DEBUG SUBMIT EXCEPTION:", str(e))
+        import traceback; traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/analytical/jobs/{job_id}")
@@ -313,3 +313,36 @@ async def get_analytical_job_status(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/analytical/jobs/{job_id}/result")
+async def get_analytical_job_result(
+    job_id: str, 
+    tenant_id: str = Depends(verify_tenant_auth)
+):
+    try:
+        async with get_tenant_connection(tenant_id) as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute('''
+                    SELECT status, result_metadata, error_info
+                    FROM research.analytical_jobs
+                    WHERE job_id = %s
+                ''', (job_id,))
+                
+                row = await cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Job not found or access denied by RLS.")
+                    
+                if row["status"] == "COMPLETED":
+                    return {"status": "COMPLETED", "result_metadata": row["result_metadata"]}
+                elif row["status"] == "FAILED":
+                    return {"status": "FAILED", "error_info": row["error_info"]}
+                else:
+                    # Still queued or running
+                    return {"status": row["status"], "message": "Job is not yet complete."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

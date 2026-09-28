@@ -1,0 +1,38 @@
+{
+  "primary": {
+    "reqs": 714,
+    "p50": 7.729768753051758,
+    "p95": 16.25697612762451,
+    "p99": 20.72216272354126,
+    "max": 5622.086048126221,
+    "slo_viol_pct": 99.57983193277312,
+    "ana_completed": 135,
+    "ana_failed": 0,
+    "ana_tps": 4.5,
+    "exec_ms": 354.95111111111106,
+    "q_wait_ms": 799.1585111111111,
+    "tot_lat_ms": 1158.2108074074072,
+    "routed_replica": 0,
+    "routed_primary": 135,
+    "lag_ms_mean": NaN,
+    "lag_bytes_mean": NaN
+  },
+  "replica": {
+    "reqs": 709,
+    "p50": 7.818460464477539,
+    "p95": 16.04685783386231,
+    "p99": 22.04908370971673,
+    "max": 5386.172533035278,
+    "slo_viol_pct": 95.48660084626233,
+    "ana_completed": 130,
+    "ana_failed": 0,
+    "ana_tps": 4.333333333333333,
+    "exec_ms": 337.02923076923076,
+    "q_wait_ms": 866.7857076923076,
+    "tot_lat_ms": 1239.101,
+    "routed_replica": 0,
+    "routed_primary": 130,
+    "lag_ms_mean": NaN,
+    "lag_bytes_mean": NaN
+  }
+}

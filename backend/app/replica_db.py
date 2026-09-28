@@ -110,7 +110,7 @@ async def routing_decision() -> tuple[str, int, float, str]:
         return ("primary", -1, -1.0, state)
     if lag_ms < 0:
         return ("primary", lag_bytes, lag_ms, "lag_unavailable")
-    if lag_ms > STALENESS_BUDGET_MS:
+    if lag_ms >= STALENESS_BUDGET_MS:
         return ("primary", lag_bytes, lag_ms, f"lag_{lag_ms:.1f}ms_exceeds_budget_{STALENESS_BUDGET_MS}ms")
 
     return ("replica", lag_bytes, lag_ms, f"lag_{lag_ms:.1f}ms_within_budget")

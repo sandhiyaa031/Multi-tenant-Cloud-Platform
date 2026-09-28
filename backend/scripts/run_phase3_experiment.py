@@ -151,20 +151,21 @@ async def run_scenario(label, replica_routing: bool):
     conn.cursor().execute("TRUNCATE research.analytical_jobs")
     conn.close()
 
-    # Start worker Docker container with appropriate REPLICA_ROUTING flag
-    worker_name = f"dbpilot-worker-p3"
-    subprocess.run(["docker", "rm", "-f", worker_name], capture_output=True)
-    proc = subprocess.Popen([
-        "docker", "run", "--rm", "--name", worker_name,
-        "--cpus=2.0", "--memory=2g",
-        "-e", "PG_HOST=host.docker.internal",
-        "-e", "PG_USER=postgres",
-        "-e", "PG_PASSWORD=100978",
-        "-e", "PG_DB=postgres",
-        "-e", f"REPLICA_ROUTING={'1' if replica_routing else '0'}",
-        "dbpilot/worker:phase1"
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    await asyncio.sleep(4)  # allow container boot
+    # Start worker as local Python subprocess (Docker daemon not available on this host)
+    env = os.environ.copy()
+    env["PG_HOST"] = "127.0.0.1"
+    env["PG_USER"] = "postgres"
+    env["PG_PASSWORD"] = "100978"
+    env["PG_DB"] = "postgres"
+    env["REPLICA_ROUTING"] = "1" if replica_routing else "0"
+    env["WORKER_ID"] = "p3-worker-1"
+
+    worker_script = os.path.join(os.path.dirname(os.path.dirname(__file__)), "worker.py")
+    proc = subprocess.Popen(
+        [sys.executable, "-u", worker_script],
+        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    await asyncio.sleep(2)  # allow worker to start polling
 
     end_time = time.time() + DURATION
     latencies = []
@@ -175,7 +176,9 @@ async def run_scenario(label, replica_routing: bool):
         tasks.append(asyncio.create_task(analytical_submitter(ana_metrics, end_time, headers)))
     await asyncio.gather(*tasks)
 
-    subprocess.run(["docker", "rm", "-f", worker_name], capture_output=True)
+    proc.terminate()  # stop local worker process
+    try: proc.wait(timeout=5)
+    except: proc.kill()
 
     # Compile
     successes = [m for m in ana_metrics if m["success"]]

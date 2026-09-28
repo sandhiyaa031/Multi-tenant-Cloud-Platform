@@ -145,19 +145,17 @@ def test_tenant_isolation_on_replica():
         tid_a = str(uuid.uuid4())
         tid_b = str(uuid.uuid4())
 
-        # Insert one row per tenant using superuser on primary
-        cur.execute("INSERT INTO app.organizations (org_id, name, created_by) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (tid_a, 'Mock A', 'system'))
-        cur.execute("INSERT INTO app.organizations (org_id, name, created_by) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (tid_b, 'Mock B', 'system'))
+        # Insert one row per tenant using superuser on primary (plain INSERT, fresh UUIDs always succeed)
+        cur.execute("INSERT INTO app.organizations (org_id, name) VALUES (%s, %s)", (tid_a, f'Mock-{tid_a[:8]}'))
+        cur.execute("INSERT INTO app.organizations (org_id, name) VALUES (%s, %s)", (tid_b, f'Mock-{tid_b[:8]}'))
 
         cur.execute("""
             INSERT INTO app.security_events (org_id, ts, uid, id_orig_h, id_orig_p, id_resp_h, id_resp_p, proto, source)
             VALUES (%s, NOW(), %s, '127.0.0.1', 80, '127.0.0.1', 443, 'tcp', 'A')
-            ON CONFLICT DO NOTHING
         """, (tid_a, str(uuid.uuid4())))
         cur.execute("""
             INSERT INTO app.security_events (org_id, ts, uid, id_orig_h, id_orig_p, id_resp_h, id_resp_p, proto, source)
             VALUES (%s, NOW(), %s, '127.0.0.1', 80, '127.0.0.1', 443, 'tcp', 'B')
-            ON CONFLICT DO NOTHING
         """, (tid_b, str(uuid.uuid4())))
         p_conn.close()
 
@@ -169,7 +167,7 @@ def test_tenant_isolation_on_replica():
         with r_conn.transaction():
             cur_r = r_conn.cursor()
             cur_r.execute("SET LOCAL ROLE dbpilot_app")
-            cur_r.execute("SET LOCAL app.tenant_id = %s", (tid_a,))
+            cur_r.execute(f"SET LOCAL app.tenant_id = '{tid_a}'")  # SET doesn't accept params
             cur_r.execute("SELECT count(*) FROM app.security_events WHERE org_id = %s", (tid_b,))
             count_b = cur_r.fetchone()[0]
         r_conn.close()

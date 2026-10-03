@@ -32,6 +32,7 @@ services:
     environment:
       CONTROL_DB_OWNER_URL: postgresql://dbpilot_owner:${CONTROL_DB_OWNER_PASSWORD}@control-db:5432/dbpilot_control
       CONTROL_DB_API_PASSWORD: ${CONTROL_DB_API_PASSWORD:?set in .env}
+      CONTROL_DB_COLLECTOR_PASSWORD: ${CONTROL_DB_COLLECTOR_PASSWORD:?set in .env}
     depends_on:
       control-db:
         condition: service_healthy
@@ -46,11 +47,39 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set in .env}
       PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:5173}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      # Tests only: the collector integration test runs inside this image.
+      CONTROL_DB_COLLECTOR_URL: postgresql://dbpilot_collector:${CONTROL_DB_COLLECTOR_PASSWORD}@control-db:5432/dbpilot_control
+      DP_MONITOR_PASSWORD: ${DATAPLANE_MONITOR_PASSWORD}
+      DP_TENANT_PASSWORD: ${DATAPLANE_TENANT_PASSWORD}
     depends_on:
       migrate:
         condition: service_completed_successfully
     ports:
       - "127.0.0.1:8000:8000"
+
+  # OBSERVE: snapshots data-plane statistics into the control-plane database.
+  collector:
+    build: ./controlplane
+    command: ["python", "-m", "app.collector"]
+    environment:
+      CONTROL_DB_COLLECTOR_URL: postgresql://dbpilot_collector:${CONTROL_DB_COLLECTOR_PASSWORD}@control-db:5432/dbpilot_control
+      DP_MONITOR_PASSWORD: ${DATAPLANE_MONITOR_PASSWORD:?set in .env}
+      COLLECT_INTERVAL_S: ${COLLECT_INTERVAL_S:-60}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # One-shot: registers the development data plane as a demo organization.
+  demo-seed:
+    build: ./controlplane
+    profiles: ["seed"]
+    command: ["python", "demo_seed.py"]
+    environment:
+      DEMO_ADMIN_EMAIL: ${DEMO_ADMIN_EMAIL:-admin@demo.dbpilot.dev}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:?set in .env}
+    depends_on:
+      - api
 
   # ---- Data plane ------------------------------------------------------------
 
@@ -64,6 +93,7 @@ services:
       POSTGRES_DB: app
       REPLICATION_PASSWORD: ${DATAPLANE_REPLICATION_PASSWORD:?set in .env}
       PGBOUNCER_AUTH_PASSWORD: ${DATAPLANE_PGBOUNCER_AUTH_PASSWORD:?set in .env}
+      MONITOR_PASSWORD: ${DATAPLANE_MONITOR_PASSWORD:?set in .env}
     command: &pg_settings
       - postgres
       - -c
@@ -158,6 +188,20 @@ services:
       dp-primary:
         condition: service_healthy
     restart: "no"
+
+  # Open-loop load generator. Run with:
+  #   docker compose run --rm workload --duration 120 --out /results/run.jsonl
+  workload:
+    build: ./workload
+    profiles: ["load"]
+    cpuset: "7-8"
+    environment:
+      DP_POOLER_HOST: pgbouncer
+      DP_TENANT_PASSWORD: ${DATAPLANE_TENANT_PASSWORD}
+    volumes:
+      - ./results:/results
+    depends_on:
+      - pgbouncer
 
   # Run with: docker compose run --rm dp-test
   dp-test:

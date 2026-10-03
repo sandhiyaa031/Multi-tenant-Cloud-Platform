@@ -33,14 +33,15 @@ def replica_owner():
         yield conn
 
 
-def test_population_matches_specification(owner):
+def test_population_follows_the_specification_and_stays_consistent_under_load(owner):
     warehouses = owner.execute("SELECT count(*) FROM ch.warehouse").fetchone()[0]
     assert warehouses == 12
     assert owner.execute("SELECT count(*) FROM ch.district").fetchone()[0] == warehouses * 10
     items = owner.execute("SELECT count(*) FROM ch.item").fetchone()[0]
     assert owner.execute("SELECT count(*) FROM ch.stock").fetchone()[0] == warehouses * items
     customers = owner.execute("SELECT count(*) FROM ch.customer").fetchone()[0]
-    assert owner.execute("SELECT count(*) FROM ch.orders").fetchone()[0] == customers
+    # One initial order per customer; the workload only ever adds orders.
+    assert owner.execute("SELECT count(*) FROM ch.orders").fetchone()[0] >= customers
     # Undelivered orders are exactly the new_order rows, and only they lack a carrier.
     assert owner.execute("SELECT count(*) FROM ch.new_order").fetchone()[0] == owner.execute(
         "SELECT count(*) FROM ch.orders WHERE o_carrier_id IS NULL"

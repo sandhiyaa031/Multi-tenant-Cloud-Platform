@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.db import pool
-from app.routers import audit, auth, members, resources
+from app.routers import audit, auth, members, resources, telemetry
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("dbpilot.api")
@@ -79,3 +79,4 @@ app.include_router(auth.router, prefix=API_PREFIX)
 app.include_router(members.router, prefix=API_PREFIX)
 app.include_router(resources.router, prefix=API_PREFIX)
 app.include_router(audit.router, prefix=API_PREFIX)
+app.include_router(telemetry.router, prefix=API_PREFIX)

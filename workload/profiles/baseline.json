@@ -1,0 +1,10 @@
+{
+  "description": "Four heterogeneous tenants on one shared instance. Rates are arrivals per second.",
+  "tenants": [
+    {"role": "t_steady",   "streams": [{"class": "OLTP", "rate": 20}]},
+    {"role": "t_bursty",   "streams": [{"class": "OLTP", "rate": 8,
+                                        "burst": {"every_s": 60, "duration_s": 15, "multiplier": 6}}]},
+    {"role": "t_analytic", "streams": [{"class": "OLAP", "rate": 0.4}]},
+    {"role": "t_mixed",    "streams": [{"class": "OLTP", "rate": 10}, {"class": "OLAP", "rate": 0.1}]}
+  ]
+}

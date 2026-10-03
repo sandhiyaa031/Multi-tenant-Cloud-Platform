@@ -223,3 +223,6 @@ backend/.env
 frontend/node_modules/
 results/*/system_metrics.csv
 results/*/diagnostic*.txt
+
+# Workload driver output
+results/

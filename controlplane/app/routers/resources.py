@@ -19,6 +19,9 @@ class ClusterIn(BaseModel):
     pooler_host: str = Field(min_length=1, max_length=253)
     pooler_port: int = Field(ge=1, le=65535)
     database_name: str = Field(min_length=1, max_length=63)
+    # Where the telemetry collector reaches the primary; without it the cluster is not observed.
+    primary_host: str | None = Field(default=None, max_length=253)
+    primary_port: int | None = Field(default=None, ge=1, le=65535)
 
 
 class ClusterOut(ClusterIn):
@@ -65,10 +68,12 @@ async def create_cluster(body: ClusterIn, principal: Principal = Depends(require
     async with principal.tx() as conn:
         cur = await conn.execute(
             """
-            INSERT INTO cp.clusters (org_id, name, pooler_host, pooler_port, database_name)
-            VALUES (cp.current_org(), %s, %s, %s, %s) RETURNING *
+            INSERT INTO cp.clusters (org_id, name, pooler_host, pooler_port, database_name,
+                                     primary_host, primary_port)
+            VALUES (cp.current_org(), %s, %s, %s, %s, %s, %s) RETURNING *
             """,
-            (body.name, body.pooler_host, body.pooler_port, body.database_name),
+            (body.name, body.pooler_host, body.pooler_port, body.database_name,
+             body.primary_host, body.primary_port),
         )
         return await cur.fetchone()
 

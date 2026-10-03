@@ -100,7 +100,7 @@ without a hypothetical index using HypoPG, which costs milliseconds.
 **Explain it.** "T1 asks the planner what it would do; T2 measures what actually
 happens. T1 is cheap and sometimes wrong, which is why T2 exists."
 
-## 5. pg_stat_statements — Built (enabled, per-tenant attribution tested); collector Designed
+## 5. pg_stat_statements and the telemetry collector — Built
 
 **What.** An extension that aggregates statistics per normalised query
 ("fingerprint": literals replaced by `$1`), per database role.
@@ -111,8 +111,27 @@ happens. T1 is cheap and sometimes wrong, which is why T2 exists."
 subtracts. Because each tenant has its own role, every row is already per-tenant.
 It gives means, not percentiles; percentiles come from the sampled statement log.
 
+**The collector** ([collector.py](../controlplane/app/collector.py)) snapshots the
+view every 60 s and stores `current − previous` in `cp.query_stats`
+([005_telemetry.sql](../controlplane/migrations/005_telemetry.sql)), a table
+partitioned by day. Three details worth knowing:
+
+- A counter that went *down* means the statistics were reset; the current value
+  is then the whole delta.
+- A fingerprint missing from the previous snapshot first ran inside the window,
+  so it counts from zero. (A test caught the first version dropping these.)
+- A fingerprint is the *shape* of the parse tree. `WHERE id = 1` and
+  `WHERE id = 2` are one fingerprint; so are two queries differing only in a
+  column alias.
+
+It logs in to the data plane as `dbpilot_monitor` (member of `pg_monitor`: can
+read statistics, cannot read tables) and to the control plane as
+`dbpilot_collector` (can append telemetry, cannot read users or the audit log).
+
 **Explain it.** "One role per tenant turns a standard extension into per-tenant
-telemetry with no proxy and no query tagging."
+telemetry with no proxy and no query tagging. The collector stores deltas, so a
+row means what a tenant did in one minute, and it runs with only the privileges
+that job needs."
 
 ## 6. PgBouncer — Built (pooling and tenant-only login); caps and routing actions Designed
 
@@ -164,7 +183,30 @@ statistics and the same queries. And cloning for verification is not my
 invention — Azure SQL does it for indexes; my contribution is the per-tenant
 gate and measuring what the twin is worth."
 
-## 9. Workload replay — Designed
+## 9a. Workload driver — Built
+
+**What.** A load generator ([workload/](../workload/)) that plays four tenants
+against the data plane: the five TPC-C transactions
+([tpcc.py](../workload/workload/tpcc.py)) and seven analytical queries
+([olap.py](../workload/workload/olap.py)).
+
+**Why our own.** Standard benchmark tools connect as one user and cannot confine
+a client to one tenant's warehouses. We need one role per tenant, per-tenant
+rates, bursts, and per-tenant measurements.
+
+**How — open loop.** Arrival times are drawn from a Poisson process
+([driver.py](../workload/workload/driver.py)) and do not wait for earlier
+requests to finish. Latency is measured from the *scheduled* arrival, so time
+spent waiting for a connection counts. A closed-loop generator (send, wait,
+send) slows down when the database is slow and so never records the worst
+latencies; this is called coordinated omission, and it was one of the flaws in
+the earlier prototype's measurements.
+
+**Explain it.** "The driver behaves like independent users, not like a script
+waiting politely. Its measurements are the ground truth for evaluation and are
+kept separate from what DBPilot observes about itself."
+
+## 9b. Workload replay — Designed
 
 **What.** Re-executing captured production statements, with their parameters,
 timing and sessions, against another instance.
@@ -241,8 +283,10 @@ experiment without distorting what it measures.
 ```bash
 docker compose up -d --build
 docker compose run --rm dp-seed                                # load the four tenants (~5 min)
-docker compose run --rm --no-deps api python -m pytest -q     # 39 control-plane tests
+docker compose run --rm --no-deps api python -m pytest -q     # 51 control-plane tests
 docker compose run --rm dp-test                                # 18 data-plane tests
+docker compose run --rm demo-seed                              # register the tenants as a demo organization
+docker compose run --rm workload --duration 180                # generate load; the collector records it
 docker compose exec control-db psql -U dbpilot_owner -d dbpilot_control
 ```
 

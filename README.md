@@ -555,8 +555,47 @@ Requirements: Docker with Compose, about 16 GB of memory, 20 CPU threads for the
 default core pinning (edit the `cpuset` values in `docker-compose.yml` for a
 smaller machine).
 
+Create a file named `.env` in the repository root with the variables below and
+your own values. It is gitignored; never commit it.
+
 ```bash
-cp .env.example .env            # then replace every value
+# Control plane
+CONTROL_DB_OWNER_PASSWORD=       # database owner, runs migrations only
+CONTROL_DB_API_PASSWORD=         # unprivileged role the API logs in as
+CONTROL_DB_COLLECTOR_PASSWORD=
+CONTROL_DB_ENGINE_PASSWORD=
+JWT_SECRET=                      # at least 32 characters: python -c "import secrets; print(secrets.token_urlsafe(48))"
+PUBLIC_WEB_URL=http://localhost:5173
+CORS_ORIGINS=http://localhost:5173
+
+# Data plane
+DATAPLANE_OWNER_PASSWORD=
+DATAPLANE_REPLICATION_PASSWORD=
+DATAPLANE_PGBOUNCER_AUTH_PASSWORD=
+DATAPLANE_MONITOR_PASSWORD=
+DATAPLANE_TENANT_PASSWORD=       # development seed: shared by the four demo tenant roles
+SEED_SCALE=1.0                   # 1.0 = TPC-C population; smaller loads faster
+SEED_ITEMS=100000
+COLLECT_INTERVAL_S=60
+
+# Experimentation plane
+TWIN_TOKEN=
+TWIN_DELAY_S=180                 # how far the twin source trails production
+TWIN_WINDOW_S=120                # length of workload replayed; at most TWIN_DELAY_S
+TWIN_REPETITIONS=2
+
+# Demo organization created by demo-seed
+DEMO_ADMIN_EMAIL=admin@demo.dbpilot.dev
+DEMO_ADMIN_PASSWORD=             # at least 10 characters
+
+# LLM agent (optional); leave empty to use only the rule-based proposer
+ANTHROPIC_API_KEY=
+AGENT_MODEL=claude-opus-5-5
+```
+
+Then:
+
+```bash
 docker compose up -d --build    # control plane, data plane, twin, web
 docker compose run --rm dp-seed     # load four tenants (about 5 minutes)
 docker compose run --rm demo-seed   # register them as a demo organization

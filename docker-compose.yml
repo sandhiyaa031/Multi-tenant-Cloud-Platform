@@ -1,0 +1,180 @@
+# DBPilot development stack. Planes are added as they are built:
+#   control plane  - control-db, migrate, api
+#   data plane     - dp-primary, dp-replica, pgbouncer, dp-seed
+#   twin plane     - not built yet
+#
+# CPU sets keep the planes off each other's cores on a single development host,
+# so load in one plane does not show up as noise in another's measurements.
+name: dbpilot
+
+services:
+  # ---- Control plane ---------------------------------------------------------
+
+  control-db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: dbpilot_owner
+      POSTGRES_PASSWORD: ${CONTROL_DB_OWNER_PASSWORD:?set in .env}
+      POSTGRES_DB: dbpilot_control
+    volumes:
+      - control-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U dbpilot_owner -d dbpilot_control"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "127.0.0.1:5440:5432"
+
+  migrate:
+    build: ./controlplane
+    command: ["python", "migrate.py"]
+    environment:
+      CONTROL_DB_OWNER_URL: postgresql://dbpilot_owner:${CONTROL_DB_OWNER_PASSWORD}@control-db:5432/dbpilot_control
+      CONTROL_DB_API_PASSWORD: ${CONTROL_DB_API_PASSWORD:?set in .env}
+    depends_on:
+      control-db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: ./controlplane
+    environment:
+      CONTROL_DB_API_URL: postgresql://dbpilot_api:${CONTROL_DB_API_PASSWORD}@control-db:5432/dbpilot_control
+      # Tests only: lets them assert facts the API role is forbidden to see.
+      CONTROL_DB_OWNER_URL: postgresql://dbpilot_owner:${CONTROL_DB_OWNER_PASSWORD}@control-db:5432/dbpilot_control
+      JWT_SECRET: ${JWT_SECRET:?set in .env}
+      PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:5173}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  # ---- Data plane ------------------------------------------------------------
+
+  dp-primary:
+    build: ./dataplane/postgres
+    cpuset: "0-3"
+    mem_limit: 6g
+    shm_size: 1g
+    environment:
+      POSTGRES_PASSWORD: ${DATAPLANE_OWNER_PASSWORD:?set in .env}
+      POSTGRES_DB: app
+      REPLICATION_PASSWORD: ${DATAPLANE_REPLICATION_PASSWORD:?set in .env}
+      PGBOUNCER_AUTH_PASSWORD: ${DATAPLANE_PGBOUNCER_AUTH_PASSWORD:?set in .env}
+    command: &pg_settings
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements,auto_explain
+      - -c
+      - pg_stat_statements.track=top
+      - -c
+      - pg_stat_statements.max=10000
+      - -c
+      - track_io_timing=on
+      - -c
+      - track_wal_io_timing=on
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - max_connections=200
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=10
+      - -c
+      - wal_keep_size=2GB
+      - -c
+      - max_wal_size=4GB
+      - -c
+      - hot_standby=on
+    volumes:
+      - dp-primary-data:/var/lib/postgresql
+    healthcheck:
+      # -h forces TCP: during first-time initialisation the server listens on the
+      # socket only, and must not be reported healthy until the real start.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d app"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    ports:
+      - "127.0.0.1:5441:5432"
+
+  dp-replica:
+    build: ./dataplane/postgres
+    cpuset: "4-5"
+    mem_limit: 4g
+    shm_size: 1g
+    entrypoint: ["replica-entrypoint.sh"]
+    command: *pg_settings
+    environment:
+      PRIMARY_HOST: dp-primary
+      REPLICATION_PASSWORD: ${DATAPLANE_REPLICATION_PASSWORD}
+    volumes:
+      - dp-replica-data:/var/lib/postgresql
+    depends_on:
+      dp-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d app"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+    ports:
+      - "127.0.0.1:5442:5432"
+
+  pgbouncer:
+    build: ./dataplane/pgbouncer
+    cpuset: "6"
+    environment:
+      PRIMARY_HOST: dp-primary
+      REPLICA_HOST: dp-replica
+      PGBOUNCER_AUTH_PASSWORD: ${DATAPLANE_PGBOUNCER_AUTH_PASSWORD}
+    depends_on:
+      dp-primary:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:6432:6432"
+
+  # One-shot: provisions the four demo tenants and loads their data.
+  dp-seed:
+    build: ./dataplane/postgres
+    entrypoint: ["psql"]
+    command:
+      - "postgresql://postgres:${DATAPLANE_OWNER_PASSWORD}@dp-primary:5432/app"
+      - -v
+      - "tenant_pw=${DATAPLANE_TENANT_PASSWORD:?set in .env}"
+      - -v
+      - "scale=${SEED_SCALE:-1.0}"
+      - -v
+      - "items=${SEED_ITEMS:-100000}"
+      - -f
+      - /seed/seed.sql
+    volumes:
+      - ./dataplane/seed:/seed:ro
+    depends_on:
+      dp-primary:
+        condition: service_healthy
+    restart: "no"
+
+  # Run with: docker compose run --rm dp-test
+  dp-test:
+    build: ./controlplane
+    profiles: ["test"]
+    working_dir: /dptests
+    command: ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "/dptests"]
+    environment:
+      DP_OWNER_URL: postgresql://postgres:${DATAPLANE_OWNER_PASSWORD}@dp-primary:5432/app
+      DP_REPLICA_OWNER_URL: postgresql://postgres:${DATAPLANE_OWNER_PASSWORD}@dp-replica:5432/app
+      DP_POOLER_HOST: pgbouncer
+      DP_PRIMARY_HOST: dp-primary
+      DP_TENANT_PASSWORD: ${DATAPLANE_TENANT_PASSWORD}
+    volumes:
+      - ./dataplane/tests:/dptests:ro
+
+volumes:
+  control-db-data:
+  dp-primary-data:
+  dp-replica-data:

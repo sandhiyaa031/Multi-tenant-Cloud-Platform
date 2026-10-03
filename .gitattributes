@@ -1,0 +1,6 @@
+# Scripts and SQL run inside Linux containers; CRLF line endings break them.
+*.sh text eol=lf
+*.sql text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+Dockerfile text eol=lf

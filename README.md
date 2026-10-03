@@ -453,7 +453,14 @@ number of tenants compared).
 | Benefit shown | Target's whole interval below 0.90 | Required for approval |
 | Unharmed | Another tenant's whole interval below 1.05 | Required for every other tenant |
 | Harm shown | A tenant's whole interval above 1.05, or an objective it was meeting is broken | Reject |
-| Uncertain | Interval straddles a limit, or too few samples | Inconclusive: escalated, never applied automatically |
+| Uncertain | Interval straddles a limit, or too few samples | Replay another window; still uncertain after three: inconclusive, escalated, never applied automatically |
+
+**More evidence instead of a guess.** When the verdict is uncertain, the engine
+replays a fresh window and judges all windows together, up to three. Looking
+several times would raise the chance of a false "safe", so each look is tested
+at a third of the error rate. Every twin-verified proposal also records what
+the other gate mode would have decided on the same measurements; that second
+verdict decides nothing and exists for comparison.
 
 Storage growth and write amplification are absolute budgets. Actions that are
 expensive to undo face a tighter margin. An **aggregate** mode judges only the
@@ -490,17 +497,26 @@ stateDiagram-v2
 2. **Apply** with the executor; the statements and their inverse are stored.
 3. **Watch.** Every window, observed p95 ÷ baseline is compared with the
    contract: the twin's prediction plus a tolerance, or a default limit when
-   there was no twin.
+   there was no twin. Two guards catch harm that latency does not show:
+   deadlocks in the window, and how far the replica has fallen behind.
 4. **Decide.** A breach in two of three windows, or telemetry missing for two
    windows, runs the inverse. Otherwise the change is marked applied.
+
+**Staging.** An index for every tenant is built on one partition first (the
+tenant the twin predicts to gain most) and on the others only after that
+stage's windows held. Every other action is one stage. Exposing a setting to a
+fraction of one tenant's sessions is in the design and not built: the pooler
+cannot select a fraction of a role's connections.
+
+**Tolerance.** How far production may drift from the twin's prediction starts
+at 10%. Once the outcome ledger holds eight twin-versus-production comparisons
+for an action type, the tolerance for that type becomes the 90th percentile of
+the twin's past error.
 
 Only one change may be in canary on a cluster at a time, so a regression can be
 attributed. If the engine restarts and finds a change in canary, it rolls it
 back: a change nobody was watching is treated as unsafe. An operator can also
 roll back an applied change later; the stored inverse is used.
-
-Staging is a single stage for every action. Exposing a setting to a fraction of
-a tenant's sessions first is in the design and not built.
 
 ## 13. Learning loop
 
@@ -512,8 +528,9 @@ production, how many harmed a tenant there, and how often the twin predicted
 the direction production then showed. The agent can read the ledger through its
 history tool.
 
-Using the ledger to calibrate the gate, and a learned model that predicts
-rejection, are later steps that need evaluation data first.
+The engine reads the ledger to set the canary tolerance per action type (see
+section 12). A learned model that predicts rejection is a later step that needs
+far more history.
 
 ## 14. Security model
 
@@ -528,7 +545,8 @@ rejection, are later steps that need evaluation data first.
 | Audit | Trigger-written, append-only, immutable even for the database owner |
 | Tenant isolation | One role per tenant, row-level security, no privileges on partitions |
 | Pooler | Admits tenant roles only |
-| Service roles | Separate least-privilege roles for the API, the collector and monitoring |
+| Service roles | Separate least-privilege roles for the API, the collector, the engine and monitoring |
+| Executor | Logs in to the data plane as `dbpilot_executor`: not a superuser, `ALTER SYSTEM` on allowlisted parameters only, ADMIN on tenant roles only, and an event trigger refuses all DDL from it except `CREATE INDEX` and `DROP INDEX`. Limit: PostgreSQL has no privilege narrower than table ownership for building an index, so as a member of the owning role it could read or change rows |
 | Secrets | Environment variables from an untracked `.env`; nothing hard-coded |
 
 ## 15. Technology stack
@@ -573,6 +591,7 @@ DATAPLANE_OWNER_PASSWORD=
 DATAPLANE_REPLICATION_PASSWORD=
 DATAPLANE_PGBOUNCER_AUTH_PASSWORD=
 DATAPLANE_MONITOR_PASSWORD=
+DATAPLANE_EXECUTOR_PASSWORD=     # the role the engine applies changes as
 DATAPLANE_TENANT_PASSWORD=       # development seed: shared by the four demo tenant roles
 SEED_SCALE=1.0                   # 1.0 = TPC-C population; smaller loads faster
 SEED_ITEMS=100000
@@ -583,6 +602,7 @@ TWIN_TOKEN=
 TWIN_DELAY_S=180                 # how far the twin source trails production
 TWIN_WINDOW_S=120                # length of workload replayed; at most TWIN_DELAY_S
 TWIN_REPETITIONS=2
+TWIN_MAX_LOOKS=3                 # replays an inconclusive verdict may use before escalating
 
 # Demo organization created by demo-seed
 DEMO_ADMIN_EMAIL=admin@demo.dbpilot.dev
@@ -600,6 +620,26 @@ docker compose up -d --build    # control plane, data plane, twin, web
 docker compose run --rm dp-seed     # load four tenants (about 5 minutes)
 docker compose run --rm demo-seed   # register them as a demo organization
 ```
+
+### Resource profiles
+
+On one machine the three planes share memory and disk, so sizes are variables.
+The defaults in `docker-compose.yml` are the full-size profile; a 16 GB laptop
+should add the smaller profile to `.env` before the first start:
+
+| Variable | Full size (default) | 16 GB laptop |
+|---|---|---|
+| `SEED_SCALE` / `SEED_ITEMS` | 1.0 / 100000 (about 1.5 GB) | 0.3 / 30000 (about 380 MB) |
+| `DP_SHARED_BUFFERS` (primary and twin clone) | 2GB | 512MB |
+| `STANDBY_SHARED_BUFFERS` (replica, twin source) | 256MB | 128MB |
+| `DP_MEM_LIMIT` / `REPLICA_MEM_LIMIT` / `TWIN_MEM_LIMIT` | 6g / 4g / 8g | 1536m / 768m / 1536m |
+| `TWIN_REPETITIONS` | 2 | 1 |
+| `EVAL_RATE_SCALE` / `EVAL_POOL_SIZE` | 1.0 / 16 | 0.5 / 8 |
+| `LOG_RETENTION_MIN` | 0 (keep the hour) | 15 |
+
+At `SEED_SCALE` below 1.0 the data no longer has the TPC-C population per
+district; measurements taken with it must say so. Changing the seed variables
+after the first start has no effect until the data-plane volumes are recreated.
 
 Generate load:
 

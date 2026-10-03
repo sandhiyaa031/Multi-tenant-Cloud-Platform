@@ -249,9 +249,9 @@ function Steps({ steps }: { steps: ProposalDetail["steps"] }) {
 function TwinRun({ run }: { run: any }) {
   const v = run.verdict;
   return (
-    <Card title="Digital twin result" sub={`${run.transactions} captured transactions replayed over ${run.window_s.toFixed(0)} s, ${run.repetitions}× per arm`} action={<Badge>{v.decision}</Badge>}>
+    <Card title="Digital twin result" sub={`${run.transactions} captured transactions in ${v.looks ?? 1} window(s) of ${run.window_s.toFixed(0)} s, replayed ${run.repetitions}× per arm in total`} action={<Badge>{v.decision}</Badge>}>
       <div className="grid cols-4" style={{ marginBottom: 14 }}>
-        <Stat label="Replay errors" value={run.replay_errors} hint={`of ${run.transactions * run.repetitions * 2} replayed`} />
+        <Stat label="Replay errors" value={run.replay_errors} hint="across both arms" />
         <Stat label="Write volume" value={run.wal_ratio == null ? "–" : fmt.ratio(run.wal_ratio)} hint="WAL, treatment ÷ control" />
         <Stat label="Storage added" value={fmt.bytes(run.storage_delta_bytes)} />
         <Stat label="Time to apply" value={run.apply_seconds == null ? "–" : `${run.apply_seconds.toFixed(1)} s`} hint="on the clone" />
@@ -271,17 +271,31 @@ function TwinRun({ run }: { run: any }) {
       ) : <p className="notice">Judged with the aggregate gate: only the workload as a whole was compared, so per-tenant effects were not examined.</p>}
       <h3 style={{ marginTop: 14 }}>Reasons</h3>
       <ul className="secondary" style={{ margin: 0, paddingLeft: 18 }}>{v.reasons.map((r: string, i: number) => <li key={i}>{r}</li>)}</ul>
+      {v.shadow && (
+        <p className="secondary" style={{ marginTop: 12 }}>
+          For comparison only, the {v.shadow.mode === "aggregate" ? "aggregate" : "per-tenant"} gate on the same measurements: <Badge>{v.shadow.decision}</Badge> {v.shadow.reasons.join("; ")}
+        </p>
+      )}
+      {v.calibration && (
+        <p className="secondary">
+          Canary tolerance {fmt.pct(v.calibration.contract_tolerance)}, {v.calibration.history_pairs >= 8
+            ? `calibrated from ${v.calibration.history_pairs} earlier twin-versus-production comparisons of this kind of action`
+            : `the default (${v.calibration.history_pairs} earlier comparisons of this kind of action; 8 are needed to calibrate)`}.
+        </p>
+      )}
     </Card>
   );
 }
 
 function CanaryView({ canary }: { canary: any }) {
   const keys = Object.keys(canary.contract).sort();
+  const staged = canary.observations.some((o: any) => (o.stage ?? 1) > 1);
+  const guards = canary.observations.flatMap((o: any, i: number) => (o.breaches ?? []).filter((b: string) => !b.includes("/")).map((b: string) => `Window ${i + 1}: ${b}`));
   return (
     <Card title="Canary" sub="production latency against the contract, per collector window" action={canary.outcome ? <Badge>{canary.outcome}</Badge> : <Badge>CANARY</Badge>}>
       {canary.outcome_reason && <p className="secondary">{canary.outcome_reason}</p>}
       <div className="table-wrap"><table>
-        <thead><tr><th>Tenant / class</th><th className="num">Baseline p95</th><th className="num">Contract</th>{canary.observations.map((_: any, i: number) => <th className="num" key={i}>Window {i + 1}</th>)}<th className="num">Result</th></tr></thead>
+        <thead><tr><th>Tenant / class</th><th className="num">Baseline p95</th><th className="num">Contract</th>{canary.observations.map((o: any, i: number) => <th className="num" key={i} title={o.stage_label}>{staged ? `Stage ${o.stage ?? 1} · ` : ""}Window {i + 1}</th>)}<th className="num">Result</th></tr></thead>
         <tbody>{keys.map((k) => (
           <tr key={k}><td>{k}</td><td className="num">{fmt.ms(canary.baseline[k])}</td><td className="num">≤ {fmt.ratio(canary.contract[k])}</td>
             {canary.observations.map((o: any, i: number) => {
@@ -291,6 +305,7 @@ function CanaryView({ canary }: { canary: any }) {
             <td className="num"><strong>{fmt.ratio(canary.result?.[k])}</strong></td></tr>
         ))}</tbody>
       </table></div>
+      {guards.length > 0 && <p className="notice">{guards.join("; ")}</p>}
       <div className="grid cols-2" style={{ marginTop: 14 }}>
         <div><h3>Applied to production</h3><pre className="trace-result">{canary.applied.join("\n")}</pre></div>
         <div><h3>Inverse, used for rollback</h3><pre className="trace-result">{canary.inverse.length ? canary.inverse.join("\n") : "nothing to undo"}</pre></div>

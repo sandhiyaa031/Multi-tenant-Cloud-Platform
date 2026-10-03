@@ -43,11 +43,15 @@ class Config:
     pooler_admin_password: str
     twin_window_s: float = 120
     twin_repetitions: int = 2
+    # An inconclusive verdict buys another replay, up to this many in total; then it escalates.
+    twin_max_looks: int = 3
     canary_baseline_windows: int = 3
     canary_windows: int = 3
     canary_window_s: float = 60          # the collector's interval
     canary_min_txns: int = 5             # per key per window, below which the window is not judged
     cluster_memory_bytes: int = 6 * 1024**3
+    canary_max_deadlocks: int = 3                       # new deadlocks per window
+    canary_max_replica_lag_bytes: int = 256 * 1024**2   # WAL a standby has not yet received
     poll_s: float = 3
 
     @staticmethod
@@ -55,11 +59,12 @@ class Config:
         e = os.environ
         return Config(
             control_url=e["CONTROL_DB_ENGINE_URL"], twin_url=e.get("TWIN_URL", "http://twin:8080"),
-            twin_token=e["TWIN_TOKEN"], executor_user=e.get("DP_EXECUTOR_USER", "postgres"),
+            twin_token=e["TWIN_TOKEN"], executor_user=e.get("DP_EXECUTOR_USER", "dbpilot_executor"),
             executor_password=e["DP_EXECUTOR_PASSWORD"],
             pooler_admin_user=e.get("DP_POOLER_ADMIN_USER", "pgbouncer_auth"),
             pooler_admin_password=e["DP_POOLER_ADMIN_PASSWORD"],
             twin_window_s=float(e.get("TWIN_WINDOW_S", "120")), twin_repetitions=int(e.get("TWIN_REPETITIONS", "2")),
+            twin_max_looks=int(e.get("TWIN_MAX_LOOKS", "3")),
             canary_baseline_windows=int(e.get("CANARY_BASELINE_WINDOWS", "3")),
             canary_windows=int(e.get("CANARY_WINDOWS", "3")),
             canary_window_s=float(e.get("COLLECT_INTERVAL_S", "60")),
@@ -118,6 +123,41 @@ def rollback_reason(history: list[dict]) -> str | None:
     if len(breached) >= 2:
         return "contract breached in 2 of the last 3 windows: " + "; ".join(breached[-1]["breaches"])
     return None
+
+
+def guard_breaches(deadlocks: int, replica_lag_bytes: float, config: "Config") -> list[str]:
+    """Signs of harm that latency percentiles do not show, checked once per canary window."""
+    breaches = []
+    if deadlocks > config.canary_max_deadlocks:
+        breaches.append(f"{deadlocks} deadlocks in one window, limit {config.canary_max_deadlocks}")
+    if replica_lag_bytes > config.canary_max_replica_lag_bytes:
+        breaches.append(f"replica is {replica_lag_bytes / 1024**2:.0f} MB behind, "
+                        f"limit {config.canary_max_replica_lag_bytes / 1024**2:.0f} MB")
+    return breaches
+
+
+def canary_stages(action: actions.Action, plan: actions.Plan, twin_effects: dict | None) -> list[tuple[str, list[str]]]:
+    """How a change is exposed to production: [(label, statements), ...].
+
+    An index for every tenant is built on one partition first and on the others
+    only after that partition's canary held. The first partition is the tenant the
+    twin predicted to gain most (the first tenant, without a prediction). Every
+    other action is a single stage: applied, observed for a fixed time, then kept
+    or undone.
+    """
+    if not (isinstance(action, actions.CreateIndex) and len(plan.apply) > 1):
+        return [("all at once", plan.apply)]
+    first = 0
+    if twin_effects:
+        best = None
+        for i, statement in enumerate(plan.apply):
+            relation = statement.split(" ON ")[1].split(" ")[0]              # ch.order_line_t_analytic
+            role = relation.split(".", 1)[1].removeprefix(action.table + "_")
+            ratios = [e["ratio"] for k, e in twin_effects.items() if k.startswith(role + "/") and e.get("ratio")]
+            if ratios and (best is None or min(ratios) < best):
+                best, first = min(ratios), i
+    rest = [s for i, s in enumerate(plan.apply) if i != first]
+    return [("stage 1: one tenant's partition", [plan.apply[first]]), ("stage 2: remaining partitions", rest)]
 
 
 # ── The engine ───────────────────────────────────────────────────────────────
@@ -202,37 +242,74 @@ class Engine:
                 "SELECT f.query FROM cp.query_fingerprints f WHERE f.cluster_id = %s AND f.query ILIKE %s"
                 " AND f.query NOT ILIKE 'EXPLAIN%%' LIMIT 100",
                 (cluster["id"], f"%ch.{action.table}%"))]
-            result = self.http.post("/whatif", json={"action": proposal["action"], "queries": queries}).raise_for_status().json()
-            if result["explained"] > 0 and result["improved"] == 0:
+            try:
+                result = self.http.post("/whatif", json={"action": proposal["action"], "queries": queries}).raise_for_status().json()
+            except httpx.HTTPError as exc:
+                # T1 is a cheap screen, not a judge: if it cannot run, the replay still decides.
+                result = None
+                self.step(db, proposal, "T1", "SKIPPED", "planner what-if unavailable; continuing to the twin replay",
+                          {"error": str(exc)[:500]}, time.monotonic() - started)
+            if result is None:
+                pass
+            elif result["explained"] > 0 and result["improved"] == 0:
                 self.step(db, proposal, "T1", "REJECT", "the planner would not use this index for any observed query",
                           result, time.monotonic() - started)
                 return self.set_state(db, proposal, "REJECTED", "T1: planner would not use the index")
-            self.step(db, proposal, "T1", "APPROVE",
-                      f"planner cost improves for {result['improved']} of {result['explained']} observed queries",
-                      result, time.monotonic() - started)
+            else:
+                self.step(db, proposal, "T1", "APPROVE",
+                          f"planner cost improves for {result['improved']} of {result['explained']} observed queries",
+                          result, time.monotonic() - started)
         else:
             self.step(db, proposal, "T1", "SKIPPED", "planner what-if applies to indexes only", {}, 0)
 
         # T2
+        # An interval that straddles a threshold buys another replay of a fresh window,
+        # judged together with the earlier ones, until the verdict is firm or the budget
+        # is spent. Looking several times is paid for in judge(): each look is tested at
+        # a stricter level, so the chance of a false "safe" over all looks stays at 5%.
         started = time.monotonic()
-        try:
-            run = self.twin_run(proposal["action"])
-        except Exception as exc:
-            self.step(db, proposal, "T2", "INCONCLUSIVE", "twin run failed", {"error": str(exc)[:1000]},
-                      time.monotonic() - started)
-            return self.set_state(db, proposal, "INCONCLUSIVE", f"T2: twin run failed: {exc}")
-        verdict = self.judge(db, proposal, cluster, action, run)
+        pooled = {"control": {}, "treatment": {}, "wal_control": 0, "wal_treatment": 0, "errors": 0,
+                  "transactions": 0, "repetitions": 0, "window_s": 0.0}
+        verdict, detail, note = None, {}, ""
+        for look in range(1, self.c.twin_max_looks + 1):
+            try:
+                # With one repetition per replay, the arm that runs first alternates between replays.
+                run = self.twin_run(proposal["action"], treatment_first=look % 2 == 0)
+            except Exception as exc:
+                if verdict is None:
+                    self.step(db, proposal, "T2", "INCONCLUSIVE", "twin run failed", {"error": str(exc)[:1000]},
+                              time.monotonic() - started)
+                    return self.set_state(db, proposal, "INCONCLUSIVE", f"T2: twin run failed: {exc}")
+                note = f" (replay {look} failed: {exc})"
+                break
+            control, treatment = run["arms"]["control"], run["arms"]["treatment"]
+            warmup = min(15.0, run["window_s"] * 0.15)
+            for arm in ("control", "treatment"):
+                gate.pool(pooled[arm], {tuple(k.split("/")): [tuple(s) for s in v]
+                                        for k, v in run["arms"][arm]["samples"].items()}, look, warmup)
+            pooled["wal_control"] += control["wal_bytes"]
+            pooled["wal_treatment"] += treatment["wal_bytes"]
+            pooled["errors"] += sum(treatment["errors"].values()) + sum(control["errors"].values())
+            pooled["transactions"] += run["transactions"]
+            pooled["repetitions"] += run["repetitions"]
+            pooled["window_s"] = run["window_s"]
+            pooled["treatment_arm"] = treatment
+            verdict, detail = self.judge(db, proposal, cluster, action, pooled)
+            detail["looks"] = look
+            if verdict.decision != "INCONCLUSIVE":
+                break
+            log.info("proposal %s inconclusive after replay %d of %d", proposal["id"], look, self.c.twin_max_looks)
         seconds = time.monotonic() - started
-        control, treatment = run["arms"]["control"], run["arms"]["treatment"]
+        treatment = pooled["treatment_arm"]
         db.execute(
             "INSERT INTO cp.twin_runs (proposal_id, org_id, window_s, transactions, repetitions, replay_errors,"
             " wal_ratio, storage_delta_bytes, apply_seconds, verdict, seconds)"
             " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (proposal["id"], proposal["org_id"], run["window_s"], run["transactions"], run["repetitions"],
-             sum(treatment["errors"].values()) + sum(control["errors"].values()),
-             treatment["wal_bytes"] / control["wal_bytes"] if control["wal_bytes"] else None,
-             treatment.get("storage_delta_bytes", 0), treatment.get("apply_s"), Jsonb(verdict.to_dict()), seconds))
-        self.step(db, proposal, "T2", verdict.decision, "; ".join(verdict.reasons), verdict.to_dict(), seconds)
+            (proposal["id"], proposal["org_id"], pooled["window_s"], pooled["transactions"], pooled["repetitions"],
+             pooled["errors"], pooled["wal_treatment"] / pooled["wal_control"] if pooled["wal_control"] else None,
+             treatment.get("storage_delta_bytes", 0), treatment.get("apply_s"), Jsonb(detail), seconds))
+        summary = "; ".join(verdict.reasons) + f" [{detail['looks']} replay(s)]" + note
+        self.step(db, proposal, "T2", verdict.decision, summary, detail, seconds)
 
         if verdict.decision == "REJECT":
             self.set_state(db, proposal, "REJECTED", "T2: " + "; ".join(verdict.reasons))
@@ -243,8 +320,9 @@ class Engine:
         else:
             self.set_state(db, proposal, "AWAITING_APPROVAL", "T2: " + "; ".join(verdict.reasons))
 
-    def twin_run(self, action: dict) -> dict:
-        body = {"action": action, "window_s": self.c.twin_window_s, "repetitions": self.c.twin_repetitions}
+    def twin_run(self, action: dict, treatment_first: bool = False) -> dict:
+        body = {"action": action, "window_s": self.c.twin_window_s, "repetitions": self.c.twin_repetitions,
+                "treatment_first": treatment_first}
         run_id = self.http.post("/runs", json=body).raise_for_status().json()["run_id"]
         deadline = time.monotonic() + self.c.twin_window_s * self.c.twin_repetitions * 2 + 900
         while time.monotonic() < deadline:
@@ -256,20 +334,43 @@ class Engine:
                 raise RuntimeError(state["error"])
         raise TimeoutError("twin run did not finish")
 
-    def judge(self, db, proposal: dict, cluster: dict, action, run: dict) -> gate.Verdict:
-        def samples(arm: str) -> dict:
-            return {tuple(k.split("/")): [tuple(s) for s in v] for k, v in run["arms"][arm]["samples"].items()}
+    def calibration(self, db, cluster: dict, action_type: str, default: float) -> tuple[float, int]:
+        """Canary tolerance for this kind of action, from how far the twin has been off before."""
+        rows = db.execute(
+            "SELECT twin_effects, production_ratios FROM cp.outcome_ledger WHERE cluster_id = %s AND action_type = %s"
+            " AND verification = 'full' AND twin_effects IS NOT NULL AND production_ratios IS NOT NULL",
+            (cluster["id"], action_type)).fetchall()
+        pairs = [(effect.get("ratio"), r["production_ratios"][key]) for r in rows
+                 for key, effect in r["twin_effects"].items() if key in r["production_ratios"]]
+        return gate.calibrated_tolerance(pairs, default)
 
+    def judge(self, db, proposal: dict, cluster: dict, action, pooled: dict) -> tuple[gate.Verdict, dict]:
+        """The verdict in the proposal's gate mode, and what is stored about it: the
+        verdict itself, the other gate mode's verdict on the same measurements (for
+        comparison only; it decides nothing), and the calibration used."""
         slos = {(r["db_role"], r["query_class"]): (r["percentile"], float(r["threshold_ms"])) for r in db.execute(
             "SELECT t.db_role, s.query_class, s.percentile, s.threshold_ms FROM cp.slos s"
             " JOIN cp.tenants t ON t.id = s.tenant_id WHERE t.cluster_id = %s", (cluster["id"],))}
-        control, treatment = run["arms"]["control"], run["arms"]["treatment"]
-        policy = gate.GatePolicy(warmup_s=min(15.0, run["window_s"] * 0.15))
-        return gate.decide(
-            samples("control"), samples("treatment"), actions.target_tenant(action), policy,
-            mode=proposal["gate_mode"], cheap_to_undo=treatment.get("cheap_to_undo", True),
-            wal_ratio=treatment["wal_bytes"] / control["wal_bytes"] if control["wal_bytes"] else None,
-            storage_delta_bytes=treatment.get("storage_delta_bytes", 0), slo_ms=slos)
+        base = gate.GatePolicy()
+        tolerance, history = self.calibration(db, cluster, action.type, base.contract_tolerance)
+        policy = gate.GatePolicy(confidence=1 - (1 - base.confidence) / self.c.twin_max_looks, n_boot=4000,
+                                 contract_tolerance=tolerance)
+        treatment = pooled["treatment_arm"]
+
+        def decide(mode: str) -> gate.Verdict:
+            return gate.decide(
+                pooled["control"], pooled["treatment"], actions.target_tenant(action), policy,
+                mode=mode, cheap_to_undo=treatment.get("cheap_to_undo", True),
+                wal_ratio=pooled["wal_treatment"] / pooled["wal_control"] if pooled["wal_control"] else None,
+                storage_delta_bytes=treatment.get("storage_delta_bytes", 0), slo_ms=slos)
+
+        verdict = decide(proposal["gate_mode"])
+        other = decide("aggregate" if proposal["gate_mode"] == "per_tenant" else "per_tenant")
+        detail = verdict.to_dict()
+        detail["shadow"] = {"mode": other.mode, "decision": other.decision, "reasons": other.reasons,
+                            "effects": other.effects}
+        detail["calibration"] = {"contract_tolerance": round(tolerance, 3), "history_pairs": history}
+        return verdict, detail
 
     # -- canary --------------------------------------------------------------
 
@@ -283,6 +384,14 @@ class Engine:
         for r in rows:
             windows.setdefault(r["window_end"], {})[f"{r['db_role']}/{r['query_class']}"] = (r["p95_ms"], r["txn_count"])
         return [{"end": end, "keys": keys} for end, keys in sorted(windows.items())]
+
+    @staticmethod
+    def health(prod: psycopg.Connection) -> tuple[int, float]:
+        """(deadlocks so far in this database, bytes of WAL the furthest-behind standby has not received)."""
+        return prod.execute(
+            "SELECT (SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()),"
+            " (SELECT coalesce(max(pg_wal_lsn_diff(pg_current_wal_lsn(), flush_lsn)), 0) FROM pg_stat_replication)"
+        ).fetchone()
 
     def reconnect_pooler(self, cluster: dict) -> None:
         """Role-level changes apply to new server connections; ask the pooler to recycle its own."""
@@ -322,39 +431,73 @@ class Engine:
         try:
             with self.production(cluster) as prod:
                 plan = actions.plan(action, prod)
-                actions.run(plan.apply, prod)
         except (psycopg.Error, actions.ActionRefused) as exc:
             return self.set_state(db, proposal, "FAILED", f"T3: could not apply: {exc}")
-        if isinstance(action, (actions.RoleSetting, actions.ConcurrencyCap)):
-            self.reconnect_pooler(cluster)
-        applied_at = datetime.now(timezone.utc)
-        db.execute(
-            "INSERT INTO cp.canaries (proposal_id, org_id, applied, inverse, contract, baseline) VALUES (%s, %s, %s, %s, %s, %s)",
-            (proposal["id"], proposal["org_id"], Jsonb(plan.apply), Jsonb(plan.inverse), Jsonb(contract), Jsonb(baseline)))
-        log.info("proposal %s applied to production; canary started", proposal["id"])
+        # Without verification there is no canary to stage: the change goes out whole.
+        stages = ([("all at once", plan.apply)] if observe_only
+                  else canary_stages(action, plan, twin["verdict"].get("effects") if twin else None))
 
         history: list[dict] = []
-        seen: set[datetime] = set()
-        deadline = time.monotonic() + self.c.canary_window_s * (self.c.canary_windows + 3)
+        applied: list[str] = []
         reason = None
-        while len(history) < self.c.canary_windows:
-            time.sleep(min(5.0, self.c.canary_window_s / 4))
-            fresh = [w for w in self.latency_windows(db, cluster["id"], applied_at) if w["end"] not in seen
-                     # A window that began before the change mixes old and new behaviour; skip it.
-                     and (w["end"] - applied_at).total_seconds() >= self.c.canary_window_s * 0.9]
-            for w in fresh:
-                seen.add(w["end"])
-                history.append({"end": w["end"].isoformat(), "telemetry": True,
-                                "ratios": {k: round(v[0] / baseline[k], 3) for k, v in w["keys"].items() if k in baseline},
-                                "counts": {k: v[1] for k, v in w["keys"].items()},
-                                "breaches": window_breaches(baseline, w["keys"], contract, self.c.canary_min_txns)})
-            if time.monotonic() > deadline and len(history) < self.c.canary_windows:
-                history.append({"end": datetime.now(timezone.utc).isoformat(), "telemetry": False, "ratios": {},
-                                "counts": {}, "breaches": []})
-                history.append(dict(history[-1]))
-            db.execute("UPDATE cp.canaries SET observations = %s WHERE proposal_id = %s", (Jsonb(history), proposal["id"]))
-            reason = None if observe_only else rollback_reason(history)
+        for number, (label, statements) in enumerate(stages, start=1):
+            try:
+                with self.production(cluster) as prod:
+                    deadlocks_before = self.health(prod)[0]
+                    actions.run(statements, prod)
+            except psycopg.Error as exc:
+                if not applied:
+                    return self.set_state(db, proposal, "FAILED", f"T3: could not apply: {exc}")
+                reason = f"{label} could not be applied: {exc}"
+                break
+            applied += statements
+            if isinstance(action, (actions.RoleSetting, actions.ConcurrencyCap)):
+                self.reconnect_pooler(cluster)
+            applied_at = datetime.now(timezone.utc)
+            if number == 1:
+                db.execute(
+                    "INSERT INTO cp.canaries (proposal_id, org_id, applied, inverse, contract, baseline)"
+                    " VALUES (%s, %s, %s, %s, %s, %s)",
+                    (proposal["id"], proposal["org_id"], Jsonb(applied), Jsonb(plan.inverse), Jsonb(contract), Jsonb(baseline)))
+            else:
+                db.execute("UPDATE cp.canaries SET applied = %s WHERE proposal_id = %s", (Jsonb(applied), proposal["id"]))
+            log.info("proposal %s: %s applied to production; observing", proposal["id"], label)
+
+            stage_history: list[dict] = []
+            seen: set[datetime] = set()
+            deadline = time.monotonic() + self.c.canary_window_s * (self.c.canary_windows + 3)
+            while len(stage_history) < self.c.canary_windows:
+                time.sleep(min(5.0, self.c.canary_window_s / 4))
+                fresh = [w for w in self.latency_windows(db, cluster["id"], applied_at) if w["end"] not in seen
+                         # A window that began before the change mixes old and new behaviour; skip it.
+                         and (w["end"] - applied_at).total_seconds() >= self.c.canary_window_s * 0.9]
+                for w in fresh:
+                    seen.add(w["end"])
+                    breaches = window_breaches(baseline, w["keys"], contract, self.c.canary_min_txns)
+                    try:
+                        with self.production(cluster) as prod:
+                            deadlocks, lag = self.health(prod)
+                        breaches += guard_breaches(deadlocks - deadlocks_before, lag, self.c)
+                        deadlocks_before = deadlocks
+                    except psycopg.Error as exc:
+                        log.warning("health check failed: %s", exc)
+                    stage_history.append({
+                        "end": w["end"].isoformat(), "telemetry": True, "stage": number, "stage_label": label,
+                        "ratios": {k: round(v[0] / baseline[k], 3) for k, v in w["keys"].items() if k in baseline},
+                        "counts": {k: v[1] for k, v in w["keys"].items()}, "breaches": breaches})
+                if time.monotonic() > deadline and len(stage_history) < self.c.canary_windows:
+                    stage_history.append({"end": datetime.now(timezone.utc).isoformat(), "telemetry": False,
+                                          "stage": number, "stage_label": label, "ratios": {}, "counts": {}, "breaches": []})
+                    stage_history.append(dict(stage_history[-1]))
+                db.execute("UPDATE cp.canaries SET observations = %s WHERE proposal_id = %s",
+                           (Jsonb(history + stage_history), proposal["id"]))
+                reason = None if observe_only else rollback_reason(stage_history)
+                if reason:
+                    break
+            history += stage_history
             if reason:
+                if len(stages) > 1:
+                    reason = f"{label}: {reason}"
                 break
 
         # Production result for the ledger: mean observed ratio per tenant and class.
@@ -377,7 +520,8 @@ class Engine:
             self.step(db, proposal, "T3", "REJECT", reason, {"observations": history}, 0)
             return self.set_state(db, proposal, "ROLLED_BACK", "T3: " + reason)
 
-        summary = "observed without enforcement" if observe_only else "contract held for every tenant"
+        summary = ("observed without enforcement" if observe_only else
+                   "contract held for every tenant" + (f" in each of {len(stages)} stages" if len(stages) > 1 else ""))
         db.execute("UPDATE cp.canaries SET outcome = 'HELD', outcome_reason = %s, result = %s, finished_at = now()"
                    " WHERE proposal_id = %s", (summary, Jsonb(result), proposal["id"]))
         self.step(db, proposal, "T3", "SKIPPED" if observe_only else "APPROVE", summary, {"observations": history}, 0)

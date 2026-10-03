@@ -127,3 +127,36 @@ def test_open_loop_run_hits_its_target_rate():
     assert row["errors"] == 0 and row["dropped"] == 0
     # Poisson arrivals at 30/s for 10 s: mean 300, standard deviation ~17.
     assert 230 <= row["completed"] <= 370
+
+
+# ── Evaluation report ────────────────────────────────────────────────────────
+
+def test_report_counts_only_what_the_trials_contain(tmp_path):
+    from evaluation.report import build, direction, spearman
+
+    def trial(scenario, config, state, reached, ratios=None, twin=None, shadow=None, harmed=()):
+        return {"scenario": scenario, "config": config, "final_state": state, "reached_production": reached,
+                "client_ratios": ratios or {}, "tenants_harmed": list(harmed), "exposure_s": 80.0 if reached else 0.0,
+                "seconds_to_decision": 100.0, "twin_ratios": twin,
+                "twin_decision": twin and ("REJECT" if config.endswith("per_tenant") else "APPROVE"),
+                "twin_shadow_decision": shadow, "twin_looks": twin and 2}
+
+    harmful = {"a/OLAP": 0.5, "b/OLTP": 1.4}
+    rows = [
+        trial("trap", "C2_no_verification", "APPLIED", True, harmful, harmed=["b/OLTP"]),
+        trial("trap", "C2_no_verification", "APPLIED", True, {"a/OLAP": 0.6, "b/OLTP": 1.2}, harmed=["b/OLTP"]),
+        trial("trap", "C4_twin_per_tenant", "REJECTED", False, twin={"a/OLAP": 0.55, "b/OLTP": 1.3}, shadow="APPROVE"),
+        {"scenario": "trap", "config": "C3_canary_only", "error": "boom", "rep": 0},
+    ]
+    text = build(rows, tmp_path)
+    assert "Computed from 3 completed trials (1 further trials failed to run" in text
+    assert "| trap | C2_no_verification | 2 | APPLIED 2 | 2 | 2 | 80 s | 100 s |" in text
+    assert "| trap | b/OLTP | 2 | 1.30 | 1.20-1.40 | yes |" in text
+    assert "| trap | REJECT 1 | APPROVE 1 | a/OLAP, b/OLTP |".replace("a/OLAP, ", "") in text   # only b is slowed
+    assert "agrees in 2 of 2" in text
+    assert (tmp_path / "outcomes.png").stat().st_size > 1000 and (tmp_path / "ground_truth.png").exists()
+    # A configuration with no completed trial has no row at all.
+    assert "| trap | C3_canary_only |" not in text.split("## Trials that failed")[0]
+
+    assert [direction(r) for r in (0.5, 1.0, 1.2)] == ["faster", "neutral", "slower"]
+    assert spearman([1, 2, 3, 4], [10, 20, 30, 40]) == 1.0 and spearman([1, 2], [1, 2]) is None

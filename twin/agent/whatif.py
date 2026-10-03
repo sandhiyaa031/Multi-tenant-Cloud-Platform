@@ -7,6 +7,7 @@ production is not involved. It is cheap and sometimes wrong, which is why the
 twin replay (T2) follows it.
 """
 import json
+import time
 
 import psycopg
 
@@ -40,7 +41,18 @@ def index_whatif(action_data: dict, queries: list[str]) -> dict:
     action = actions.parse_action(action_data)
     if not isinstance(action, actions.CreateIndex):
         return {"supported": False, "reason": f"planner what-if does not apply to {action.type}"}
+    # The twin source is a standby: a query on it can be cancelled when replay needs
+    # to remove rows the query might still see. That is transient, so try again.
+    for attempt in range(4):
+        try:
+            return _index_whatif(action, queries)
+        except psycopg.errors.SerializationFailure:
+            if attempt == 3:
+                raise
+            time.sleep(1 + attempt)
 
+
+def _index_whatif(action: actions.CreateIndex, queries: list[str]) -> dict:
     with pg.connect(pg.SOURCE_PORT) as conn:
         plan = actions.plan(action, conn)
         before = {q: _cost(conn, q) for q in queries}

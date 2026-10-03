@@ -22,8 +22,13 @@ DELAY_S = int(os.environ.get("TWIN_DELAY_S", "180"))
 
 # Same engine settings as the production primary, so plans and memory behaviour
 # match. Statement logging is off: the twin is measured by the replayer.
+CLONE_BUFFERS = os.environ.get("TWIN_SHARED_BUFFERS", "2GB")   # must equal the primary's
+SOURCE_BUFFERS = os.environ.get("TWIN_SOURCE_BUFFERS", "256MB")  # the delayed standby only replays WAL
+# The standby keeps recycled WAL segments up to max_wal_size, and every clone is a
+# copy of its data directory: a small limit keeps that dead weight out of each copy.
+SOURCE_OPTS = "-c max_wal_size=128MB -c min_wal_size=32MB"
 ENGINE_OPTS = (
-    "-c shared_preload_libraries=pg_stat_statements,auto_explain -c shared_buffers=1GB -c max_connections=200"
+    "-c shared_preload_libraries=pg_stat_statements,auto_explain -c max_connections=200"
     " -c track_io_timing=on -c logging_collector=off -c log_min_duration_statement=-1"
     " -c listen_addresses=localhost -c hot_standby=on"
 )
@@ -42,8 +47,9 @@ def is_running(datadir: Path) -> bool:
 
 
 def start(datadir: Path, port: int, cpus: str | None = None) -> None:
+    sizing = f"-c shared_buffers={SOURCE_BUFFERS} {SOURCE_OPTS}" if datadir == SOURCE else f"-c shared_buffers={CLONE_BUFFERS}"
     cmd = ["pg_ctl", "-D", str(datadir), "-w", "-t", "300", "-l", str(datadir.parent / f"{datadir.name}.log"),
-           "-o", f"-p {port} {ENGINE_OPTS}", "start"]
+           "-o", f"-p {port} {sizing} {ENGINE_OPTS}", "start"]
     if cpus:
         # Pin the instance to its own cores so the replayer does not compete with it.
         cmd = ["taskset", "-c", cpus, *cmd]
@@ -79,7 +85,9 @@ def bootstrap_source() -> None:
     env = {**os.environ, "PGPASSWORD": os.environ["REPLICATION_PASSWORD"]}
     subprocess.run(
         ["pg_basebackup", "-h", os.environ["PRIMARY_HOST"], "-p", "5432", "-U", "replicator",
-         "-D", str(SOURCE), "-R", "-X", "stream"],
+         "-D", str(SOURCE), "-R", "-X", "stream",
+         # Without this the backup waits for the primary's next spread checkpoint: minutes.
+         "--checkpoint=fast"],
         check=True, env=env,
     )
     with open(SOURCE / "postgresql.auto.conf", "a", encoding="utf-8") as f:

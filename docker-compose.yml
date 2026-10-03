@@ -1,17 +1,26 @@
-# DBPilot development stack. Planes are added as they are built:
-#   control plane  - control-db, migrate, api
-#   data plane     - dp-primary, dp-replica, pgbouncer, dp-seed
-#   twin plane     - not built yet
+# DBPilot on one machine:
+#   control plane          - control-db, migrate, api, collector, engine, web
+#   data plane             - dp-primary, dp-replica, pgbouncer, dp-seed
+#   experimentation plane  - twin
 #
 # CPU sets keep the planes off each other's cores on a single development host,
 # so load in one plane does not show up as noise in another's measurements.
+#
+# Sizes are variables with full-size defaults. A machine with 16 GB of memory
+# should set the smaller profile in .env (see "Resource profiles" in the README):
+# on one host the planes share memory and disk, and a twin run that starves the
+# primary of cache turns into a production incident.
 name: dbpilot
 
 services:
   # ---- Control plane ---------------------------------------------------------
 
   control-db:
+    # An init process as PID 1. Without it PostgreSQL is PID 1, inherits orphaned
+    # health-check processes, and restarts itself when one of them exits abnormally.
+    init: true
     image: postgres:18
+    mem_limit: 512m
     environment:
       POSTGRES_USER: dbpilot_owner
       POSTGRES_PASSWORD: ${CONTROL_DB_OWNER_PASSWORD:?set in .env}
@@ -60,8 +69,9 @@ services:
       CONTROL_DB_ENGINE_URL: postgresql://dbpilot_engine:${CONTROL_DB_ENGINE_PASSWORD}@control-db:5432/dbpilot_control
       TWIN_URL: http://twin:8080
       TWIN_TOKEN: ${TWIN_TOKEN}
-      DP_EXECUTOR_PASSWORD: ${DATAPLANE_OWNER_PASSWORD}
+      DP_EXECUTOR_PASSWORD: ${DATAPLANE_EXECUTOR_PASSWORD}
       DP_POOLER_ADMIN_PASSWORD: ${DATAPLANE_PGBOUNCER_AUTH_PASSWORD}
+    mem_limit: 384m
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -72,6 +82,7 @@ services:
   # so the browser only ever talks to one origin.
   web:
     build: ./web
+    mem_limit: 128m
     depends_on:
       - api
     ports:
@@ -81,6 +92,7 @@ services:
   collector:
     build: *controlplane_build
     command: ["python", "-m", "app.collector"]
+    mem_limit: 384m
     environment:
       CONTROL_DB_COLLECTOR_URL: postgresql://dbpilot_collector:${CONTROL_DB_COLLECTOR_PASSWORD}@control-db:5432/dbpilot_control
       DP_MONITOR_PASSWORD: ${DATAPLANE_MONITOR_PASSWORD:?set in .env}
@@ -97,14 +109,16 @@ services:
   engine:
     build: *controlplane_build
     command: ["python", "-m", "app.engine"]
+    mem_limit: 384m
     environment:
       CONTROL_DB_ENGINE_URL: postgresql://dbpilot_engine:${CONTROL_DB_ENGINE_PASSWORD}@control-db:5432/dbpilot_control
       TWIN_URL: http://twin:8080
       TWIN_TOKEN: ${TWIN_TOKEN}
       TWIN_WINDOW_S: ${TWIN_WINDOW_S:-120}
       TWIN_REPETITIONS: ${TWIN_REPETITIONS:-2}
+      TWIN_MAX_LOOKS: ${TWIN_MAX_LOOKS:-3}
       COLLECT_INTERVAL_S: ${COLLECT_INTERVAL_S:-60}
-      DP_EXECUTOR_PASSWORD: ${DATAPLANE_OWNER_PASSWORD}
+      DP_EXECUTOR_PASSWORD: ${DATAPLANE_EXECUTOR_PASSWORD}
       DP_POOLER_ADMIN_PASSWORD: ${DATAPLANE_PGBOUNCER_AUTH_PASSWORD}
     depends_on:
       migrate:
@@ -125,16 +139,20 @@ services:
   # ---- Data plane ------------------------------------------------------------
 
   dp-primary:
+    # An init process as PID 1. Without it PostgreSQL is PID 1, inherits orphaned
+    # health-check processes, and restarts itself when one of them exits abnormally.
+    init: true
     build: ./dataplane/postgres
     cpuset: "0-3"
-    mem_limit: 6g
-    shm_size: 1g
+    mem_limit: ${DP_MEM_LIMIT:-6g}
+    shm_size: 512m
     environment:
       POSTGRES_PASSWORD: ${DATAPLANE_OWNER_PASSWORD:?set in .env}
       POSTGRES_DB: app
       REPLICATION_PASSWORD: ${DATAPLANE_REPLICATION_PASSWORD:?set in .env}
       PGBOUNCER_AUTH_PASSWORD: ${DATAPLANE_PGBOUNCER_AUTH_PASSWORD:?set in .env}
       MONITOR_PASSWORD: ${DATAPLANE_MONITOR_PASSWORD:?set in .env}
+      EXECUTOR_PASSWORD: ${DATAPLANE_EXECUTOR_PASSWORD:?set in .env}
     command: &pg_settings
       - postgres
       - -c
@@ -148,7 +166,9 @@ services:
       - -c
       - track_wal_io_timing=on
       - -c
-      - shared_buffers=1GB
+      # Sized to hold the whole development database, so the working set stays in
+      # PostgreSQL's own cache and twin copies cannot push it out of the page cache.
+      - shared_buffers=${DP_SHARED_BUFFERS:-2GB}
       - -c
       - max_connections=200
       - -c
@@ -165,7 +185,8 @@ services:
       - -c
       - hot_standby=on
       # Statement capture: every statement with its duration and parameters, as JSON.
-      # Six ten-minute files are reused in a cycle, so one hour is retained.
+      # Files are named by the minute and reused each hour; the twin node deletes
+      # those older than LOG_RETENTION_MIN.
       - -c
       - logging_collector=on
       - -c
@@ -196,14 +217,18 @@ services:
       - "127.0.0.1:5441:5432"
 
   dp-replica:
+    # An init process as PID 1. Without it PostgreSQL is PID 1, inherits orphaned
+    # health-check processes, and restarts itself when one of them exits abnormally.
+    init: true
     build: ./dataplane/postgres
     cpuset: "4-5"
-    mem_limit: 4g
-    shm_size: 1g
+    mem_limit: ${REPLICA_MEM_LIMIT:-4g}
+    shm_size: 256m
     entrypoint: ["replica-entrypoint.sh"]
     command: *pg_settings
     environment:
       PRIMARY_HOST: dp-primary
+      STANDBY_SHARED_BUFFERS: ${STANDBY_SHARED_BUFFERS:-256MB}
       REPLICATION_PASSWORD: ${DATAPLANE_REPLICATION_PASSWORD}
     volumes:
       - dp-replica-data:/var/lib/postgresql
@@ -221,6 +246,7 @@ services:
   pgbouncer:
     build: ./dataplane/pgbouncer
     cpuset: "6"
+    mem_limit: 128m
     environment:
       PRIMARY_HOST: dp-primary
       REPLICA_HOST: dp-replica
@@ -262,18 +288,23 @@ services:
       context: .
       dockerfile: twin/Dockerfile
     cpuset: "12-19"
-    mem_limit: 8g
-    shm_size: 2g
+    mem_limit: ${TWIN_MEM_LIMIT:-8g}
+    shm_size: 512m
     environment:
       PRIMARY_HOST: dp-primary
       REPLICATION_PASSWORD: ${DATAPLANE_REPLICATION_PASSWORD}
       TWIN_TOKEN: ${TWIN_TOKEN:?set in .env}
       TWIN_DELAY_S: ${TWIN_DELAY_S:-180}
       TWIN_INSTANCE_CPUS: "12-15"
+      # The clone under measurement gets the primary's cache size.
+      TWIN_SHARED_BUFFERS: ${DP_SHARED_BUFFERS:-2GB}
+      TWIN_SOURCE_BUFFERS: ${STANDBY_SHARED_BUFFERS:-256MB}
       DP_LOG_DIR: /var/log/dbpilot
+      # Capture files older than this are deleted (0 keeps the full hour).
+      LOG_RETENTION_MIN: ${LOG_RETENTION_MIN:-0}
     volumes:
       - twin-data:/twin
-      - dp-logs:/var/log/dbpilot:ro
+      - dp-logs:/var/log/dbpilot
     depends_on:
       dp-primary:
         condition: service_healthy
@@ -308,6 +339,10 @@ services:
       DEMO_ADMIN_EMAIL: ${DEMO_ADMIN_EMAIL:-admin@demo.dbpilot.dev}
       DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD}
       EVAL_WARM_S: ${EVAL_WARM_S:-150}
+      # Multiplies every stream's request rate; connections per stream.
+      EVAL_RATE_SCALE: ${EVAL_RATE_SCALE:-1.0}
+      EVAL_POOL_SIZE: ${EVAL_POOL_SIZE:-16}
+    mem_limit: 512m
     volumes:
       - ./results:/results
     depends_on:
@@ -323,6 +358,8 @@ services:
     environment:
       DP_OWNER_URL: postgresql://postgres:${DATAPLANE_OWNER_PASSWORD}@dp-primary:5432/app
       DP_REPLICA_OWNER_URL: postgresql://postgres:${DATAPLANE_OWNER_PASSWORD}@dp-replica:5432/app
+      DP_EXECUTOR_URL: postgresql://dbpilot_executor:${DATAPLANE_EXECUTOR_PASSWORD}@dp-primary:5432/app
+      PYTHONPATH: /srv
       DP_POOLER_HOST: pgbouncer
       DP_PRIMARY_HOST: dp-primary
       DP_TENANT_PASSWORD: ${DATAPLANE_TENANT_PASSWORD}

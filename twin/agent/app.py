@@ -8,9 +8,11 @@ import hmac
 import logging
 import os
 import threading
+import time
 import traceback
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -25,9 +27,35 @@ runs: dict[str, dict] = {}
 busy = threading.Lock()  # one run at a time: runs share the node's CPU and disk
 
 
+RETENTION_MIN = float(os.environ.get("LOG_RETENTION_MIN", "0"))
+
+
+def prune_capture(directory: str, minutes: float) -> int:
+    """Deletes captured statement files last written more than `minutes` ago. The
+    twin only ever replays the most recent window, and at full load the capture
+    grows by tens of megabytes a minute."""
+    cutoff, removed = time.time() - minutes * 60, 0
+    for path in Path(directory).glob("pg-*"):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError:
+            pass  # rotated or removed underneath us; the next pass sees the truth
+    return removed
+
+
+def _pruner() -> None:
+    while True:
+        time.sleep(60)
+        prune_capture(runner.LOG_DIR, RETENTION_MIN)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     pg.ensure_source()
+    if RETENTION_MIN > 0:
+        threading.Thread(target=_pruner, daemon=True).start()
     yield
     pg.stop(pg.WORK)
     pg.stop(pg.SOURCE)
@@ -45,6 +73,7 @@ class RunIn(BaseModel):
     action: dict | None = None
     window_s: float = Field(default=120, ge=10, le=1800)
     repetitions: int = Field(default=1, ge=1, le=5)
+    treatment_first: bool = False
 
 
 class WhatIfIn(BaseModel):
@@ -59,7 +88,7 @@ def status():
 
 def _execute(run_id: str, body: RunIn) -> None:
     try:
-        runs[run_id].update(state="DONE", result=runner.run(body.action, body.window_s, body.repetitions))
+        runs[run_id].update(state="DONE", result=runner.run(body.action, body.window_s, body.repetitions, body.treatment_first))
     except Exception as exc:  # reported to the caller, who decides what a failed run means
         log.error("run %s failed:\n%s", run_id, traceback.format_exc())
         runs[run_id].update(state="FAILED", error=f"{type(exc).__name__}: {exc}")

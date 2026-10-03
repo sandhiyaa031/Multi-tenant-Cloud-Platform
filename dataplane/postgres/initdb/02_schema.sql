@@ -219,7 +219,7 @@ GRANT EXECUTE ON FUNCTION ch.my_w_lo(), ch.my_w_hi() TO ch_tenant;
 -- Creates a tenant: its login role, its row in tenant_map, and its partition of
 -- each large table. Tenants are never granted anything on the partitions
 -- themselves, so the only way in is through the parent table and its policy.
-CREATE FUNCTION ch.provision_tenant(p_role name, p_password text, p_w_lo integer, p_w_hi integer)
+CREATE OR REPLACE FUNCTION ch.provision_tenant(p_role name, p_password text, p_w_lo integer, p_w_hi integer)
 RETURNS void
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -237,6 +237,10 @@ BEGIN
         EXECUTE format('CREATE TABLE ch.%I PARTITION OF ch.%I FOR VALUES FROM (%s) TO (%s)',
                        t || '_' || p_role, t, p_w_lo, p_w_hi + 1);
     END LOOP;
+    -- New partitions and the new role become manageable by DBPilot's executor (executor.sql).
+    IF to_regprocedure('ch.sync_executor()') IS NOT NULL THEN
+        PERFORM ch.sync_executor();
+    END IF;
 END $$;
 
 -- ── PgBouncer authentication lookup ──────────────────────────────────────────

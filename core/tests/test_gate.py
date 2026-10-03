@@ -130,3 +130,44 @@ def test_warmup_is_excluded():
     with_warmup = GatePolicy(n_boot=400, warmup_s=30)
     assert decide(control, treatment, "a", with_warmup).decision == "APPROVE"
     assert decide(control, treatment, "a", POLICY).decision != "APPROVE"
+
+
+# ── Several replays judged together; calibration ─────────────────────────────
+
+def test_pooling_keeps_replays_apart_and_drops_each_warmup():
+    from dbpilot_core.gate import pool
+
+    acc: dict = {}
+    pool(acc, {("t", "OLTP"): [(1.0, 10.0), (20.0, 11.0)]}, 1, warmup_s=5)
+    pool(acc, {("t", "OLTP"): [(2.0, 12.0), (21.0, 13.0)]}, 2, warmup_s=5)
+    times = [t for t, _ in acc[("t", "OLTP")]]
+    assert [lat for _, lat in acc[("t", "OLTP")]] == [11.0, 13.0]       # warm-up samples of both replays dropped
+    assert times[1] - times[0] >= 1_000_000 - 1                           # never share a time bucket
+
+
+def test_more_replays_narrow_the_interval():
+    """Why an inconclusive verdict is worth another replay."""
+    from dbpilot_core.gate import pool
+
+    def interval(blocks: int) -> float:
+        control, treatment = {}, {}
+        for b in range(1, blocks + 1):
+            c, t = arms({A: 1.0, B: 1.0}, seed=b * 1000)
+            pool(control, c, b, 0)
+            pool(treatment, t, b, 0)
+        e = decide(control, treatment, "a", POLICY).effects["b/OLTP"]
+        return e["hi"] - e["lo"]
+
+    assert interval(4) < interval(1) * 0.75
+
+
+def test_calibration_needs_history_and_is_bounded():
+    from dbpilot_core.gate import calibrated_tolerance
+
+    assert calibrated_tolerance([], 0.10) == (0.10, 0)
+    assert calibrated_tolerance([(1.0, 1.4)] * 7, 0.10) == (0.10, 7)                 # too little history
+    assert calibrated_tolerance([(1.0, 1.02)] * 10, 0.10) == (0.10, 10)             # never below the default
+    tolerance, n = calibrated_tolerance([(0.5, 0.6)] * 9 + [(1.0, 1.0)], 0.10)      # twin off by 20% nine times in ten
+    assert n == 10 and abs(tolerance - 0.20) < 1e-9
+    assert calibrated_tolerance([(1.0, 3.0)] * 10, 0.10)[0] == 0.5                  # capped
+    assert calibrated_tolerance([(None, 1.0), (0.0, 1.0)] * 10, 0.10) == (0.10, 0)  # unusable pairs ignored

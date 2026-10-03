@@ -52,8 +52,10 @@ def _arm(action: actions.Action | None, transactions, t0: datetime) -> dict:
     return result
 
 
-def run(action_data: dict | None, window_s: float, repetitions: int = 1) -> dict:
-    """`action_data` None runs an A/A test: two identical arms, to measure the noise floor."""
+def run(action_data: dict | None, window_s: float, repetitions: int = 1, treatment_first: bool = False) -> dict:
+    """`action_data` None runs an A/A test: two identical arms, to measure the noise floor.
+    `treatment_first` flips which arm starts, so a caller that asks for one repetition
+    at a time can still alternate the order between its calls."""
     action = actions.parse_action(action_data) if action_data else None
     if action is not None and not isinstance(action, actions.EXECUTABLE):
         raise ValueError(f"{action.type} cannot be evaluated on the twin")
@@ -70,7 +72,7 @@ def run(action_data: dict | None, window_s: float, repetitions: int = 1) -> dict
     # drift in the host, or an advantage of running first, falls on both arms alike.
     for rep in range(repetitions):
         order = [("control", None), ("treatment", action)]
-        if rep % 2:
+        if (rep + treatment_first) % 2:
             order.reverse()
         for name, arm_action in order:
             outcome = _arm(arm_action, transactions, t0)

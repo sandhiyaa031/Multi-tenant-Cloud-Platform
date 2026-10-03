@@ -64,6 +64,33 @@ class Verdict:
         return asdict(self)
 
 
+def pool(into: dict[Key, list[Sample]], samples: dict[Key, list[Sample]], block: int, warmup_s: float) -> None:
+    """Adds one replay's samples to an accumulated set, for a verdict over several replays.
+
+    Each replay follows its own captured schedule, so its time buckets must not be
+    paired with another replay's: the times are shifted into a range of their own.
+    The warm-up of each replay is dropped here, before the shift hides it.
+    """
+    offset = block * 1_000_000.0
+    for key, values in samples.items():
+        into.setdefault(key, []).extend((t + offset, latency) for t, latency in values if t >= warmup_s)
+
+
+def calibrated_tolerance(pairs: list[tuple[float, float]], default: float, *, min_pairs: int = 8,
+                         cap: float = 0.5) -> tuple[float, int]:
+    """How far production may drift from the twin's prediction before the canary rolls back.
+
+    `pairs` are (twin ratio, production ratio) for past changes of the same kind
+    that reached production. With enough history the tolerance is the 90th
+    percentile of the twin's relative error, never below the default and never
+    above `cap`; with too little, the default. Returns (tolerance, pairs used).
+    """
+    errors = [abs(prod / twin - 1) for twin, prod in pairs if twin and prod and twin > 0]
+    if len(errors) < min_pairs:
+        return default, len(errors)
+    return float(min(cap, max(default, np.percentile(errors, 90)))), len(errors)
+
+
 def _metric(values: np.ndarray, metric: str) -> float:
     if metric == "mean":
         return float(values.mean())

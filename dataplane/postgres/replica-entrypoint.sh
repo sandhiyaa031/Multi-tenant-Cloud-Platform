@@ -18,9 +18,11 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
     SLOT="${REPLICATION_SLOT:-dp_replica}"
     backup() {
         PGPASSWORD="$REPLICATION_PASSWORD" gosu postgres pg_basebackup \
-            -h "$PRIMARY_HOST" -p 5432 -U replicator -D "$PGDATA" -R -X stream -P -S "$SLOT" "$@"
+            -h "$PRIMARY_HOST" -p 5432 -U replicator -D "$PGDATA" -R -X stream -P --checkpoint=fast -S "$SLOT" "$@"
     }
     backup -C || { rm -rf "${PGDATA:?}"/*; backup; }
 fi
 
-exec docker-entrypoint.sh "$@"
+# A standby only replays WAL and serves occasional reads: it gets a small cache
+# so that it does not compete with the primary for memory on a single host.
+exec docker-entrypoint.sh "$@" -c shared_buffers="${STANDBY_SHARED_BUFFERS:-256MB}"

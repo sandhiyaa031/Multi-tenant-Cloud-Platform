@@ -1,7 +1,7 @@
 import psycopg
 import pytest
 
-from app.engine import rollback_reason, t0_static, window_breaches
+from app.engine import Config, canary_stages, guard_breaches, rollback_reason, t0_static, window_breaches
 from dbpilot_core import actions
 
 INDEX = {"type": "create_index", "table": "order_line", "columns": ["ol_i_id"], "tenant_role": "t_analytic"}
@@ -65,6 +65,38 @@ def test_lost_telemetry_triggers_rollback():
     blind = {"breaches": [], "telemetry": False}
     assert rollback_reason([blind]) is None
     assert "telemetry lost" in rollback_reason([blind, blind])
+
+
+def test_guards_catch_harm_that_latency_does_not_show():
+    config = Config("", "", "", "", "", "", "")
+    assert guard_breaches(0, 0, config) == []
+    assert guard_breaches(config.canary_max_deadlocks, 10 * 1024**2, config) == []
+    assert "deadlocks" in guard_breaches(config.canary_max_deadlocks + 1, 0, config)[0]
+    assert "replica is 512 MB behind" in guard_breaches(0, 512 * 1024**2, config)[0]
+    # A guard breach is a breach like any other: two windows of it roll the change back.
+    bad = {"breaches": guard_breaches(9, 0, config), "telemetry": True}
+    assert "2 of the last 3" in rollback_reason([bad, bad])
+
+
+def test_index_for_every_tenant_is_staged_and_everything_else_is_not():
+    every = actions.parse_action({"type": "create_index", "table": "order_line", "columns": ["ol_i_id"]})
+    plan = actions.Plan(
+        apply=[f"CREATE INDEX CONCURRENTLY IF NOT EXISTS i_{r} ON ch.order_line_{r} (ol_i_id)"
+               for r in ("t_steady", "t_bursty", "t_analytic")],
+        inverse=[f"DROP INDEX CONCURRENTLY IF EXISTS ch.i_{r}" for r in ("t_steady", "t_bursty", "t_analytic")])
+    # No prediction: the first partition goes first.
+    stages = canary_stages(every, plan, None)
+    assert [len(s) for _, s in stages] == [1, 2] and "order_line_t_steady" in stages[0][1][0]
+    # With a prediction: the tenant the twin expects to gain most goes first, and nothing is lost.
+    effects = {"t_steady/OLTP": {"ratio": 1.02}, "t_analytic/OLAP": {"ratio": 0.2}, "t_bursty/OLTP": {"ratio": None}}
+    stages = canary_stages(every, plan, effects)
+    assert "order_line_t_analytic" in stages[0][1][0]
+    assert sorted(stages[0][1] + stages[1][1]) == sorted(plan.apply)
+
+    one = actions.parse_action(INDEX)
+    assert len(canary_stages(one, actions.Plan(apply=plan.apply[:1], inverse=[]), None)) == 1
+    setting = actions.parse_action({"type": "instance_setting", "name": "jit", "value": "off"})
+    assert len(canary_stages(setting, actions.Plan(apply=["a", "b"], inverse=[]), None)) == 1
 
 
 # ── API and database rules ───────────────────────────────────────────────────

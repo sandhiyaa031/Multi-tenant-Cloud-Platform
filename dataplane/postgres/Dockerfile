@@ -9,5 +9,6 @@ RUN apt-get update \
 RUN mkdir -p /var/log/dbpilot && chown postgres:postgres /var/log/dbpilot
 
 COPY initdb/ /docker-entrypoint-initdb.d/
+COPY executor.sql /usr/local/share/dbpilot/executor.sql
 COPY replica-entrypoint.sh /usr/local/bin/replica-entrypoint.sh
 RUN chmod +x /usr/local/bin/replica-entrypoint.sh /docker-entrypoint-initdb.d/*.sh

@@ -156,7 +156,7 @@ spec:
           env:
             - {name: CONTROL_DB_ENGINE_URL, value: "postgresql://dbpilot_engine:$(CONTROL_DB_ENGINE_PASSWORD)@control-db:5432/dbpilot_control"}
             - {name: TWIN_URL, value: "http://twin:8080"}
-            - {name: DP_EXECUTOR_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_OWNER_PASSWORD}}}
+            - {name: DP_EXECUTOR_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_EXECUTOR_PASSWORD}}}
             - {name: DP_POOLER_ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_PGBOUNCER_AUTH_PASSWORD}}}
 ---
 apiVersion: v1
@@ -214,6 +214,9 @@ spec:
       nodeSelector: {dbpilot.io/plane: data}
       # The log volume is created root-owned; PostgreSQL runs as uid 999.
       securityContext: {fsGroup: 999}
+      # PostgreSQL must not be PID 1: it would reap orphaned probe processes and treat
+      # one that exits abnormally as a crashed backend. The pause container is PID 1.
+      shareProcessNamespace: true
       containers:
         - name: postgres
           image: REGISTRY/dbpilot-dataplane:TAG
@@ -224,7 +227,7 @@ spec:
             - -c
             - track_io_timing=on
             - -c
-            - shared_buffers=1GB
+            - shared_buffers=2GB
             - -c
             - max_connections=200
             - -c
@@ -233,6 +236,8 @@ spec:
             - max_wal_senders=10
             - -c
             - wal_keep_size=2GB
+            - -c
+            - max_slot_wal_keep_size=8GB
             - -c
             - logging_collector=on
             - -c
@@ -255,6 +260,7 @@ spec:
             - {name: REPLICATION_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_REPLICATION_PASSWORD}}}
             - {name: PGBOUNCER_AUTH_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_PGBOUNCER_AUTH_PASSWORD}}}
             - {name: MONITOR_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_MONITOR_PASSWORD}}}
+            - {name: EXECUTOR_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_EXECUTOR_PASSWORD}}}
           ports: [{containerPort: 5432}]
           readinessProbe:
             exec: {command: [pg_isready, -h, 127.0.0.1, -U, postgres, -d, app]}
@@ -292,6 +298,7 @@ spec:
     metadata: {labels: {app: dp-replica, plane: data}}
     spec:
       nodeSelector: {dbpilot.io/plane: data}
+      shareProcessNamespace: true
       containers:
         - name: postgres
           image: REGISTRY/dbpilot-dataplane:TAG

@@ -196,3 +196,62 @@ def test_hypopg_is_available(owner):
         assert "<" in plan and "btree" in plan  # hypothetical indexes are named <oid>btree_...
     finally:
         owner.execute("SELECT hypopg_reset()")
+
+
+# ── The executor's role ──────────────────────────────────────────────────────
+
+@pytest.fixture
+def executor():
+    with psycopg.connect(os.environ["DP_EXECUTOR_URL"], autocommit=True) as conn:
+        yield conn
+
+
+def test_executor_is_not_a_superuser_and_owns_nothing_itself(owner):
+    row = owner.execute("SELECT rolsuper, rolreplication, rolbypassrls FROM pg_roles"
+                        " WHERE rolname = 'dbpilot_executor'").fetchone()
+    assert row == (False, False, False)
+
+
+@pytest.mark.parametrize("data", [
+    {"type": "create_index", "table": "order_line", "columns": ["ol_supply_w_id"], "tenant_role": "t_steady"},
+    {"type": "role_setting", "tenant_role": "t_steady", "name": "work_mem", "value": "8192"},
+    {"type": "concurrency_cap", "tenant_role": "t_steady", "max_connections": 50},
+    {"type": "instance_setting", "name": "default_statistics_target", "value": "150"},
+    {"type": "analyze", "table": "new_order", "tenant_role": "t_steady"},
+])
+def test_executor_role_can_apply_and_undo_every_executable_action(executor, data):
+    """The same plan() and run() the engine uses, as the role the engine logs in as."""
+    from dbpilot_core import actions
+
+    plan = actions.plan(actions.parse_action(data), executor)
+    try:
+        actions.run(plan.apply, executor)
+    finally:
+        actions.run(plan.inverse, executor)
+
+
+def test_executor_grants_cover_exactly_the_instance_allowlist(owner):
+    from dbpilot_core import actions
+
+    granted = {r[0] for r in owner.execute(
+        "SELECT p.parname FROM pg_parameter_acl p, aclexplode(p.paracl) a"
+        " WHERE a.grantee = 'dbpilot_executor'::regrole AND a.privilege_type = 'ALTER SYSTEM'")}
+    assert granted == set(actions.INSTANCE_SETTINGS)
+
+
+@pytest.mark.parametrize("statement", [
+    "DROP TABLE ch.history_t_steady",
+    "ALTER TABLE ch.item ADD COLUMN x int",
+    "CREATE TABLE ch.x (a int)",
+    "GRANT SELECT ON ch.item TO PUBLIC",
+    "ALTER SYSTEM SET shared_preload_libraries = ''",
+    "ALTER SYSTEM SET fsync = off",
+    "ALTER ROLE postgres PASSWORD 'x'",
+    "ALTER ROLE dbpilot_monitor SET work_mem = '1GB'",
+    "CREATE ROLE evil SUPERUSER",
+    "SET ROLE t_steady",
+    "COPY ch.item TO PROGRAM 'cat'",
+])
+def test_executor_role_is_refused_everything_outside_the_action_space(executor, statement):
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        executor.execute(statement)

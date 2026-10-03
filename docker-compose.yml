@@ -68,6 +68,15 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
 
+  # The control-plane UI. Serves the built app and proxies /api to the API,
+  # so the browser only ever talks to one origin.
+  web:
+    build: ./web
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:5173:80"
+
   # OBSERVE: snapshots data-plane statistics into the control-plane database.
   collector:
     build: *controlplane_build

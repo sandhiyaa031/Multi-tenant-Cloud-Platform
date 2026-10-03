@@ -182,3 +182,39 @@ def test_detail_and_ledger(client, org, cluster_with_tenant):
 def test_action_schema_is_published(client, org):
     body = client.get("/api/v1/actions/schema", headers=org.admin).json()
     assert "work_mem" in body["role_settings"] and "order_line" in body["tables"]
+
+
+def test_experiment_summary_counts_harm_and_twin_agreement():
+    from app.routers.insight import summarise
+
+    def row(verification, state, production=None, twin=None, target="T1"):
+        return {"source": "agent", "verification": verification, "gate_mode": "per_tenant", "state": state,
+                "target_tenant_id": target, "production_ratios": production,
+                "twin_effects": {k: {"ratio": v} for k, v in (twin or {}).items()} or None}
+
+    roles = {"T1": "t_analytic"}
+    rows = [
+        # Unverified: helped its target, hurt a neighbour in production.
+        row("none", "APPLIED", {"t_analytic/OLAP": 0.5, "t_steady/OLTP": 1.4}),
+        # Unverified and harmless.
+        row("none", "APPLIED", {"t_analytic/OLAP": 0.6, "t_steady/OLTP": 1.0}),
+        # A slowdown of the target itself is not "harm to another tenant".
+        row("none", "APPLIED", {"t_analytic/OLAP": 1.5, "t_steady/OLTP": 1.0}),
+        # Fully verified: the twin predicted both directions correctly.
+        row("full", "APPLIED", {"t_analytic/OLAP": 0.5, "t_steady/OLTP": 1.01},
+            {"t_analytic/OLAP": 0.55, "t_steady/OLTP": 0.99}),
+        row("full", "REJECTED", None, {"t_analytic/OLAP": 0.5, "t_steady/OLTP": 1.4}),
+    ]
+    by_mode = {g["verification"]: g for g in summarise(rows, roles)}
+    assert by_mode["none"]["reached_production"] == 3 and by_mode["none"]["harmful_in_production"] == 1
+    full = by_mode["full"]
+    assert full["proposals"] == 2 and full["reached_production"] == 1 and full["harmful_in_production"] == 0
+    assert full["states"] == {"APPLIED": 1, "REJECTED": 1}
+    assert (full["direction_checks"], full["direction_agreements"]) == (2, 2)   # 1.01 vs 0.99 are both "no change"
+
+
+def test_insight_endpoints_respect_tenancy(client, org, other_org, cluster_with_tenant):
+    assert client.get(f"/api/v1/clusters/{cluster_with_tenant}/experiments", headers=org.admin).json()["groups"] == []
+    assert client.get(f"/api/v1/clusters/{cluster_with_tenant}/slo-status", headers=org.admin).status_code == 200
+    for path in ("slo-status", "twin", "settings"):
+        assert client.get(f"/api/v1/clusters/{cluster_with_tenant}/{path}", headers=other_org.admin).status_code == 404

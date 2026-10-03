@@ -29,6 +29,14 @@ def _arm(action: actions.Action | None, transactions, t0: datetime) -> dict:
         limits = dict(conn.execute(
             "SELECT r.rolname, r.rolconnlimit FROM pg_roles r JOIN ch.tenant_map m ON m.db_role = r.rolname"
         ).fetchall())
+        # A fresh clone has an empty buffer cache, while production's is warm. Left alone,
+        # whichever arm runs first pays for reading everything from disk and looks slower
+        # for reasons unrelated to the action. Loading every relation into memory puts both
+        # arms in the same warm state before measuring.
+        conn.execute("CREATE EXTENSION IF NOT EXISTS pg_prewarm")
+        conn.execute(
+            "SELECT pg_prewarm(c.oid) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+            " WHERE n.nspname = 'ch' AND c.relkind IN ('r', 'i')")
         # Both arms start the replay from the same point: nothing left to flush from
         # promotion or from applying the action.
         conn.execute("CHECKPOINT")

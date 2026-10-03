@@ -55,6 +55,8 @@ class Recorder:
     _bucket: dict = field(default_factory=lambda: defaultdict(list))
     _errors: dict = field(default_factory=lambda: defaultdict(int))
     _dropped: dict = field(default_factory=lambda: defaultdict(int))
+    # Every flushed interval, kept in memory for callers that analyse the run afterwards.
+    intervals: list = field(default_factory=list)
     totals: dict = field(default_factory=lambda: defaultdict(list))
     total_errors: dict = field(default_factory=lambda: defaultdict(int))
     total_dropped: dict = field(default_factory=lambda: defaultdict(int))
@@ -75,6 +77,15 @@ class Recorder:
         now = time.time()
         keys = set(self._bucket) | set(self._errors) | set(self._dropped)
         lines = []
+        # Per tenant and class, across operations: what the evaluation compares.
+        by_class: dict = defaultdict(list)
+        for (tenant, cls, _), values in self._bucket.items():
+            by_class[(tenant, cls)].extend(values)
+        for (tenant, cls), values in by_class.items():
+            values.sort()
+            self.intervals.append({"t": round(now - self.started, 1), "wall": now, "tenant": tenant, "class": cls,
+                                   "count": len(values), "p50_ms": percentile(values, 50),
+                                   "p95_ms": percentile(values, 95), "p99_ms": percentile(values, 99)})
         for tenant, cls, op in sorted(keys):
             values = sorted(self._bucket.get((tenant, cls, op), []))
             lines.append(
@@ -144,9 +155,11 @@ async def stream(
     recorder: Recorder,
     duration_s: float,
     max_inflight: int,
+    only: list[str] | None = None,
 ) -> None:
-    """One Poisson arrival process for one tenant and class."""
-    names, fns, weights = zip(*MIXES[cls])
+    """One Poisson arrival process for one tenant and class. `only` restricts the
+    class's mix to the named operations (used by scenarios that isolate one query)."""
+    names, fns, weights = zip(*[m for m in MIXES[cls] if not only or m[0] in only])
     loop = asyncio.get_running_loop()
     start = loop.time()
     next_at = start
@@ -185,8 +198,9 @@ async def stream(
 
 
 async def run(profile: dict, dsn_for: Callable[[str], str], duration_s: float, out_path: str | None,
-              interval_s: float = 10.0, pool_size: int = 16, max_inflight: int = 200) -> list[dict]:
-    recorder = Recorder(out_path=out_path, interval_s=interval_s)
+              interval_s: float = 10.0, pool_size: int = 16, max_inflight: int = 200,
+              recorder: Recorder | None = None) -> list[dict]:
+    recorder = recorder or Recorder(out_path=out_path, interval_s=interval_s)
     pools: dict[str, AsyncConnectionPool] = {}
     tasks = []
     try:
@@ -209,7 +223,7 @@ async def run(profile: dict, dsn_for: Callable[[str], str], duration_s: float, o
                 tasks.append(
                     asyncio.create_task(
                         stream(ctx, s["class"], burst_rate(s["rate"], s.get("burst")), pool, recorder,
-                               duration_s, max_inflight)
+                               duration_s, max_inflight, s.get("only"))
                     )
                 )
 

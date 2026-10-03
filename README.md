@@ -8,11 +8,13 @@ those proposals: it measures each one on a real clone of the database, under a
 replay of the real workload, for every tenant, and applies it only when the
 tenant it is meant to help benefits **and no other tenant is harmed**.
 
-> **Project state.** The control plane, the multi-tenant data plane, the
-> workload driver and the telemetry pipeline are implemented and tested. The
-> agent, digital twin, verification engine, canary controller and web UI are
-> designed in detail but not yet implemented. The [status table](#20-implementation-status)
-> says exactly which is which. No experimental results are claimed yet.
+> **Project state.** Every component in the loop is implemented: telemetry,
+> proposers, the digital twin, the verification engine, canary and rollback, and
+> the web console. A proposal has been taken through all tiers on the
+> development stack. What does **not** exist yet is an experimental evaluation:
+> only single pilot trials have been run, on one machine where the planes are
+> not isolated from each other, so **no results are claimed**. The
+> [status table](#20-implementation-status) says how far each part is verified.
 
 ---
 
@@ -323,126 +325,195 @@ A tenant-aware load generator that connects through PgBouncer as each tenant.
 
 ```mermaid
 flowchart LR
-    PSS["pg_stat_statements<br/>cumulative, per role + fingerprint"] --> COL[Collector<br/>snapshot every 60 s]
+    PSS["pg_stat_statements<br/>cumulative, per role + fingerprint"] --> COL[Collector]
     PSD["pg_stat_database · pg_stat_wal<br/>pg_stat_replication"] --> COL
-    COL -->|"delta = current − previous"| QS[("query_stats<br/>per tenant, per fingerprint, per window")]
+    LOG["JSON statement log<br/>every statement, duration, parameters"] --> COL
+    LOG --> TW[Twin replay]
+    COL -->|"delta = current − previous"| QS[("query_stats<br/>per tenant, fingerprint, window")]
     COL --> IS[("instance_stats")]
-    QS --> API["API: top queries · tenant load"]
+    COL -->|"percentiles per transaction"| LS[("latency_stats<br/>per tenant, class, window")]
+    QS --> API["API and UI"]
     IS --> API
+    LS --> API
+    LS --> CAN[Canary controller]
 ```
 
-PostgreSQL's counters only grow. The collector snapshots them and stores the
-difference between consecutive snapshots, so each row means "this tenant ran
-this query this many times, for this long, in this window". A statistics reset
-is detected (a counter went down) and handled; a query first seen inside a
-window counts from zero.
+- **Query statistics.** PostgreSQL's counters only grow. The collector snapshots
+  them and stores the difference between consecutive snapshots, so each row
+  means "this tenant ran this query this many times, for this long, in this
+  window". A statistics reset is detected and handled; a query first seen
+  inside a window counts from zero.
+- **Latency percentiles.** The primary logs every statement as JSON. A parser
+  reassembles the log into transactions per tenant and class, which gives the
+  p50, p95 and p99 that cumulative counters cannot. The same capture is what
+  the digital twin replays.
+- **On demand.** Execution plans (planned on the twin source, never on
+  production), table and index profiles, and the current value of every
+  tunable setting.
 
 The collector runs with least privilege on both sides: a monitoring role on the
 data plane that can read statistics but no table data, and a control-plane role
 that can append telemetry but cannot read users, memberships or the audit log.
 
-The design adds latency percentiles from sampled statement logs, sampled
-execution plans, wait and lock sampling, and workload-shift detection.
+Capturing every statement is expensive (about 75 MB of log per minute at the
+development workload). Its effect on latency has not been measured yet.
 
 ## 9. Agent and action space
 
-*Designed.* The agent is given read-only tools — top queries, execution plans,
-table and index profiles, wait profiles, SLO status, a what-if index check, and
-past outcomes — and reasons over real system state. Its only output with any
-effect is one typed action:
+Two proposers share one interface and one set of observations, so that a
+comparison between them isolates the reasoning:
 
-| ID | Action | Scope | Inverse |
-|---|---|---|---|
-| A0 | No action / escalate to a human | — | — |
-| A1 | Create index | One tenant's partition, or all | Drop |
-| A2 | Drop unused index | Same | Recreate from stored definition |
-| A3 | Role-level setting (allowlisted, bounded) | One tenant | Previous value |
-| A4 | Instance setting (reload-only, allowlisted, bounded) | Instance | Previous value |
-| A5 | Refresh or tune statistics | One table | Previous value |
-| A6 | Route a tenant's reads to the replica | One tenant | Route back |
-| A7 | Per-tenant concurrency cap | One tenant | Previous value |
-| A8 | Query rewrite | Advisory only | — |
+- **Rule-based proposer** — fixed runbook rules: tenant-scoped memory for a
+  tenant whose queries spill to disk, an index when an expensive read filters
+  an unindexed column *and* the planner confirms the gain, a statistics refresh
+  for stale partitions, a concurrency cap for a tenant bursting while another
+  misses its objective.
+- **LLM agent** — given ten read-only tools (objective status, latency, top
+  queries, tenant load, query plan, table profile, settings, what-if index,
+  history, tenant list) and one tool with an effect, `propose_action`.
 
-A rule-based proposer implements the same interface. It is the baseline the
-agent is compared against, and it lets the whole pipeline run without a model.
+Whatever a proposer emits must validate against this closed action space.
+Anything else is rejected before it reaches a database; the agent receives the
+validation error and may correct itself.
+
+| ID | Action | Scope | Inverse | Applied by executor |
+|---|---|---|---|---|
+| A0 | No action / escalate to a human | — | — | — |
+| A1 | Create index | One tenant's partition, or all | Drop | Yes |
+| A2 | Drop index (never one enforcing a constraint) | One index | Recreate from stored definition | Yes |
+| A3 | Role-level setting (allowlisted, bounded) | One tenant | Previous value | Yes |
+| A4 | Instance setting (reload-only, allowlisted, bounded) | Instance | Previous value | Yes |
+| A5 | Refresh statistics | One table or partition | Nothing to undo | Yes |
+| A6 | Route a tenant's reads to the replica | One tenant | Route back | Advisory only |
+| A7 | Per-tenant concurrency cap | One tenant | Previous value | Yes |
+| A8 | Query rewrite | — | — | Advisory only |
+
+The executor derives both the statements that apply an action and the
+statements that undo it, reading the current state so the inverse restores
+exactly what was there. The same executor runs against the twin and against
+production, so what was verified is what gets applied.
+
+Every tool call the agent makes is stored with its proposal and shown in the
+Agent Console. The agent loop is tested against a scripted model; it has not
+yet been run against the live model API in this project.
 
 ## 10. Digital twin
 
-*Designed.* The twin is a real PostgreSQL instance, not a simulation.
+The twin is a real PostgreSQL instance, not a simulation.
 
 ```mermaid
 flowchart LR
-    PRI[(Production primary)] -- "replication, applied ~15 min late" --> TS[(Twin source)]
-    PRI -- "statement log of the same 15 min" --> RP[Replayer]
-    TS -- copy --> C[(Control)]
-    TS -- copy --> T[(Treatment)]
+    PRI[(Production primary)] -- "replication, applied late" --> TS[(Twin source)]
+    PRI -- "statement log of the same period" --> RP[Replayer]
+    TS -- "freeze at T0, copy" --> C[(Control)]
+    TS -- "freeze at T0, copy" --> T[(Treatment)]
     ACT[Proposed action] --> T
     RP --> C
     RP --> T
-    C --> M["Per-tenant difference<br/>treatment − control"]
+    C --> M["Per-tenant difference<br/>treatment vs control"]
     T --> M
 ```
 
-1. A standby deliberately stays about 15 minutes behind production, so it is
-   always at a known past state for which the workload has already been captured.
-2. It is copied twice. Both copies become standalone instances.
-3. The proposed action is applied to the treatment copy only.
-4. The captured workload is replayed against both, with original timing and
-   tenant roles, interleaved to cancel drift.
-5. Latency, throughput, errors, write volume, index size and resource use are
-   compared per tenant.
+1. A standby deliberately applies production's changes late, so it is always at
+   a known past moment for which the workload has already been captured.
+2. On a run, its replay is paused, its position recorded, and its data
+   directory copied. Each copy is started with a recovery target at exactly
+   that position; without it the copy would roll forward through the WAL it had
+   received but not yet applied.
+3. Every relation is loaded into memory on both clones, so both start equally
+   warm. (Before this was added, whichever clone ran first looked about three
+   times slower.)
+4. The proposed action is applied to the treatment clone only.
+5. The captured transactions are replayed against both at their original
+   offsets, as their original tenant roles, with arm order alternating between
+   repetitions.
+6. Latency per tenant and class, write volume, storage growth and time to apply
+   are reported to the control plane, which decides.
 
-**Fidelity is measured, not assumed.** Runs with no change give the noise
-floor; known good and known harmful actions are applied to both the twin and
-production to report how often the twin predicts the right direction.
+The twin node agent also answers planner what-if questions (hypothetical
+indexes via HypoPG) and produces execution plans, both on the twin source.
 
 ## 11. Verification engine
 
-*Designed.* Four tiers, cheapest first. Each returns approve, reject or
-inconclusive.
+Four tiers, cheapest first. A proposal stops at the first tier that rejects it.
 
 | Tier | Check | Cost |
 |---|---|---|
-| T0 | Static rules: valid, within bounds, memory and storage budgets | Milliseconds |
-| T1 | Planner what-if with hypothetical indexes | Seconds |
-| T2 | Digital twin replay | Minutes |
-| T3 | Canary in production | Minutes to hours |
+| T0 | Static rules: valid action, known tenant, not a duplicate, worst-case memory arithmetic | Milliseconds |
+| T1 | Planner what-if: would any observed query use this index? | Seconds |
+| T2 | Digital twin replay, judged by the gate below | Minutes |
+| T3 | Canary in production under a rollback contract | Minutes |
 
-Tier 2 approves only if **all** hold:
+**The gate.** For each tenant and class it computes treatment p95 ÷ control p95
+with a confidence interval (block bootstrap over time buckets, corrected for the
+number of tenants compared).
 
-- the target tenant's improvement is statistically clear and large enough;
-- for **every other tenant**, any regression is statistically shown to be
-  within a small margin, and its SLO is still predicted to hold;
-- storage growth, write amplification, build cost and replica lag are within budget;
-- actions that are expensive to undo meet stricter thresholds.
+| Finding | Condition | Consequence |
+|---|---|---|
+| Benefit shown | Target's whole interval below 0.90 | Required for approval |
+| Unharmed | Another tenant's whole interval below 1.05 | Required for every other tenant |
+| Harm shown | A tenant's whole interval above 1.05, or an objective it was meeting is broken | Reject |
+| Uncertain | Interval straddles a limit, or too few samples | Inconclusive: escalated, never applied automatically |
 
-It also emits a **rollback contract**: per-tenant thresholds, derived from the
-twin's prediction, that the canary will enforce.
+Storage growth and write amplification are absolute budgets. Actions that are
+expensive to undo face a tighter margin. An **aggregate** mode judges only the
+pooled workload, as single-tenant tuners do; it exists as the comparison point.
+
+The proposal lifecycle is a state machine enforced by a database trigger: no
+code path, and not even the database owner, can move a proposal to production
+without passing through verification, revive a rejected proposal, or edit an
+action after it was proposed.
+
+```mermaid
+stateDiagram-v2
+    [*] --> PROPOSED
+    PROPOSED --> VERIFYING
+    VERIFYING --> REJECTED
+    VERIFYING --> INCONCLUSIVE
+    VERIFYING --> AWAITING_APPROVAL
+    VERIFYING --> APPROVED: auto-approve
+    VERIFYING --> ADVISORY
+    AWAITING_APPROVAL --> APPROVED: operator
+    AWAITING_APPROVAL --> REJECTED
+    INCONCLUSIVE --> APPROVED: admin override
+    INCONCLUSIVE --> REJECTED
+    APPROVED --> CANARY
+    CANARY --> APPLIED: contract held
+    CANARY --> ROLLED_BACK: contract breached
+    APPLIED --> ROLLBACK_REQUESTED: operator
+    ROLLBACK_REQUESTED --> ROLLED_BACK
+```
 
 ## 12. Canary and rollback
 
-*Designed.* How a change is exposed gradually depends on what it is:
+1. **Baseline.** Each tenant's p95 in the collector windows just before the change.
+2. **Apply** with the executor; the statements and their inverse are stored.
+3. **Watch.** Every window, observed p95 ÷ baseline is compared with the
+   contract: the twin's prediction plus a tolerance, or a default limit when
+   there was no twin.
+4. **Decide.** A breach in two of three windows, or telemetry missing for two
+   windows, runs the inverse. Otherwise the change is marked applied.
 
-| Action | First | Then |
-|---|---|---|
-| Index | Target tenant's partition | Other partitions |
-| Role-level setting | A fraction of the tenant's sessions | All sessions |
-| Read-path instance setting | Replica | Primary |
-| Write-path instance setting | Time-boxed on the primary | Confirmed |
-| Routing, concurrency cap | A percentage of traffic | All |
+Only one change may be in canary on a cluster at a time, so a regression can be
+attributed. If the engine restarts and finds a change in canary, it rolls it
+back: a change nobody was watching is treated as unsafe. An operator can also
+roll back an applied change later; the stored inverse is used.
 
-Rollback is automatic when a tenant breaches its contract in two of three
-windows, errors or lock waits spike, replica lag exceeds budget, production
-deviates from the twin's prediction, telemetry is lost, or the canary is not
-confirmed in time.
+Staging is a single stage for every action. Exposing a setting to a fraction of
+a tenant's sessions first is in the design and not built.
 
 ## 13. Learning loop
 
-*Designed.* Every proposal leaves one record: observations → proposal → tier
-verdicts → twin prediction → canary result → production result. Two uses from
-the start: calibrating how much to trust the twin for each kind of action, and
-giving the agent past outcomes on similar targets. A learned model that
-predicts rejection is a later addition, once there is enough history to train on.
+Every proposal leaves one record: proposal → verification steps → twin
+prediction per tenant → canary observations → production result. A database
+view joins them into the **outcome ledger**. The Experiments page is computed
+from it: for each proposer and verification mode, how many proposals reached
+production, how many harmed a tenant there, and how often the twin predicted
+the direction production then showed. The agent can read the ledger through its
+history tool.
+
+Using the ledger to calibrate the gate, and a learned model that predicts
+rejection, are later steps that need evaluation data first.
 
 ## 14. Security model
 
@@ -464,46 +535,55 @@ predicts rejection is a later addition, once there is enough history to train on
 
 | Technology | Used for | Why this one |
 |---|---|---|
-| PostgreSQL 18 | Managed database and control-plane store | Row-level security, partitioning, rich statistics views, JSON plans |
-| `pg_stat_statements` | Per-tenant query statistics | Built in; keyed by role |
-| HypoPG | Planner what-if | Tests an index without building it |
-| PgBouncer | Pooling, tenant-only login, routing | The control point for per-tenant limits |
-| FastAPI + psycopg 3 | Control-plane API | Async, typed, SQL written by hand so the database features are visible |
-| Docker Compose | Running the system | One command reproduces every service and version |
+| PostgreSQL 18 | Managed database and control-plane store | Row-level security, partitioning, rich statistics views, JSON plans and logs |
+| `pg_stat_statements`, `pg_prewarm`, HypoPG | Per-tenant statistics, equal cache state on clones, planner what-if | Statistics keyed by role; test an index without building it |
+| PgBouncer | Pooling, tenant-only login | The single door tenants use |
+| FastAPI + psycopg 3 | API, collector, engine, twin node agent | Typed and async; SQL written by hand so the database features are visible |
+| NumPy | Bootstrap confidence intervals in the gate | The statistics are simple enough not to need more |
+| Anthropic SDK (tool calling) | The LLM agent | Structured tool use; no agent framework |
+| React + TypeScript + Recharts | Control-plane UI | An authenticated single-page app; no server rendering needed |
+| Docker Compose | Running all three planes on one machine | One command reproduces every service and version |
+| k3s | Three-node deployment (manifests written, not deployed) | Node placement and taints give real isolation between planes |
 | pytest | Tests | Run inside the containers against real databases |
 
-Planned with the remaining components: React with TypeScript for the UI,
-language-model tool calling for the agent, scipy for the verification
-statistics, Prometheus for host metrics, and k3s for the three-node deployment.
 Deliberately not used: vector databases, agent frameworks, message queues.
+Not yet added: Prometheus for host and container metrics.
 
 ## 16. Getting started
 
-Requirements: Docker with Compose, about 8 GB of free memory.
+Requirements: Docker with Compose, about 16 GB of memory, 20 CPU threads for the
+default core pinning (edit the `cpuset` values in `docker-compose.yml` for a
+smaller machine).
 
 ```bash
 cp .env.example .env            # then replace every value
-docker compose up -d --build    # control plane, data plane, collector
+docker compose up -d --build    # control plane, data plane, twin, web
 docker compose run --rm dp-seed     # load four tenants (about 5 minutes)
 docker compose run --rm demo-seed   # register them as a demo organization
 ```
 
-Generate load and watch it arrive:
+Generate load:
 
 ```bash
-docker compose run --rm workload --duration 180
+docker compose run --rm workload --profile profiles/eval.json --duration 900
 ```
 
-After two collector windows (about two minutes), open http://localhost:8000/docs,
-log in with `DEMO_ADMIN_EMAIL` / `DEMO_ADMIN_PASSWORD` from `.env`, and call
-`/clusters/{id}/top-queries`.
+Open http://localhost:5173 and sign in with `DEMO_ADMIN_EMAIL` /
+`DEMO_ADMIN_PASSWORD` from `.env`. After a couple of collector windows the
+Overview, Workloads and Query Intelligence pages fill in. Under
+Recommendations, propose an action and follow it through verification.
+
+To use the LLM agent, set `ANTHROPIC_API_KEY` in `.env`. Without it the
+rule-based proposer still works.
 
 | Service | Address |
 |---|---|
+| Web console | http://localhost:5173 |
 | API and interactive documentation | http://localhost:8000/docs |
 | PgBouncer (tenants) | localhost:6432 |
 | Primary / replica (administration) | localhost:5441 / localhost:5442 |
 | Control-plane database | localhost:5440 |
+| Twin node agent | localhost:8090 |
 
 ## 17. API overview
 
@@ -516,46 +596,58 @@ All paths are under `/api/v1`.
 | | `POST /members`, `PATCH /members/{id}`, `DELETE /members/{id}` | ADMIN |
 | Clusters | `GET /clusters` | VIEWER |
 | | `POST /clusters` | ADMIN |
-| Tenants and SLOs | `GET /tenants`, `GET /tenants/{id}/slos` | VIEWER |
+| Tenants and objectives | `GET /tenants`, `GET /tenants/{id}/slos` | VIEWER |
 | | `POST /tenants`, `DELETE /tenants/{id}`, `PUT /tenants/{id}/slos` | OPERATOR |
-| Telemetry | `GET /clusters/{id}/top-queries`, `/tenant-load`, `/instance` | VIEWER |
-| Audit | `GET /audit` | VIEWER |
+| Telemetry | `GET /clusters/{id}/top-queries`, `/tenant-load`, `/latency`, `/instance`, `/slo-status`, `/settings`, `/tables/{table}`, `/queries/{queryid}/explain` | VIEWER |
+| Proposals | `GET /proposals`, `GET /proposals/{id}`, `GET /actions/schema` | VIEWER |
+| | `POST /clusters/{id}/proposals`, `POST /clusters/{id}/diagnose` | OPERATOR |
+| | `POST /proposals/{id}/approve` | OPERATOR; ADMIN to override an inconclusive verification |
+| | `POST /proposals/{id}/reject`, `POST /proposals/{id}/rollback` | OPERATOR |
+| Evidence | `GET /clusters/{id}/ledger`, `/experiments`, `/twin`; `GET /audit` | VIEWER |
 
 ## 18. Testing
 
 Tests run inside containers against real PostgreSQL instances.
 
 ```bash
-docker compose run --rm --no-deps api python -m pytest -q                       # control plane
+docker compose run --rm --no-deps api python -m pytest -q                       # control plane and core
 docker compose run --rm dp-test                                                 # data plane
 docker compose run --rm --entrypoint python workload -m pytest -q tests         # workload driver
 ```
 
 | Suite | Tests | Examples of what is proven |
 |---|---|---|
-| Control plane | 51 | A VIEWER cannot write even with raw SQL; organizations cannot see each other; two admins demoting each other concurrently leaves exactly one; the audit log cannot be altered; telemetry is attributed to the right tenant |
+| Control plane and core | 127 | A VIEWER cannot write even with raw SQL; organizations cannot see each other; the audit log cannot be altered; no path takes a proposal to production without verification; the gate rejects a change that helps its target and harms a neighbour, and the aggregate gate approves the same change; the agent's out-of-space output is bounced back, not executed |
 | Data plane | 18 | A tenant sees only its warehouses and cannot reach another tenant's partition; partitions are pruned under row-level security; an index can be built for one tenant; the replica follows and is read-only; the pooler refuses non-tenant roles |
 | Workload driver | 19 | Each transaction and query runs correctly as a tenant; New-Order keeps orders and order lines consistent; the open-loop generator hits its target rate |
+
+The twin, the engine's live path and the web console are exercised end to end by
+running the system (a proposal has been taken through all tiers on the
+development stack), not by automated tests.
 
 ## 19. Repository layout
 
 ```
+core/dbpilot_core/   shared: typed actions and executor, safety gate, statement-log parser
 controlplane/
-  app/            API: auth, members, resources, telemetry, audit; collector
-  migrations/     control-plane schema, security, functions, telemetry
+  app/               API routers, collector, engine, observer, proposers (rules, agent)
+  migrations/        control-plane schema: tenancy, security, audit, telemetry, proposals
   tests/
 dataplane/
-  postgres/       image, schema, tenancy, loader, replica bootstrap
-  pgbouncer/      image and configuration
-  seed/           four-tenant development seed
+  postgres/          image, schema, tenancy, loader, replica bootstrap
+  pgbouncer/         image and configuration
+  seed/              four-tenant development seed
   tests/
+twin/agent/          twin node agent: clone management, replay, what-if
 workload/
-  workload/       TPC-C transactions, analytical queries, open-loop driver
-  profiles/       tenant arrival profiles
-  tests/
+  workload/          TPC-C transactions, analytical queries, open-loop driver
+  evaluation/        scenarios, configurations and the trial harness
+  profiles/
+web/src/             React console
+deploy/k3s/          three-node Kubernetes manifests
 docs/
-  ARCHITECTURE.md     the full design specification
-  LEARNING_GUIDE.md   every technology explained
+  ARCHITECTURE.md    the design specification, with a table of where the build differs
+  LEARNING_GUIDE.md  every technology explained
 docker-compose.yml
 ```
 
@@ -564,21 +656,24 @@ docker-compose.yml
 | Component | State |
 |---|---|
 | Authentication, organizations, RBAC, audit | Implemented, tested |
-| Clusters, tenants, SLOs | Implemented, tested |
+| Clusters, tenants, objectives | Implemented, tested |
 | Multi-tenant data plane, replica, pooler | Implemented, tested |
 | Workload driver | Implemented, tested |
-| Telemetry: per-tenant query and instance statistics | Implemented, tested |
-| Telemetry: percentiles from logs, plans, waits, shift detection | Designed |
-| Scenario suite and baselines | Designed |
-| Digital twin and replay | Designed |
-| Agent, action planner, executor | Designed |
-| Verification engine, canary controller, outcome ledger | Designed |
-| Web UI | Designed |
-| Three-node Kubernetes deployment | Designed |
-| Experimental evaluation | Not started; no results exist |
+| Telemetry: query statistics, instance counters, latency percentiles | Implemented, tested |
+| Typed action space and executor | Implemented, tested |
+| Safety gate (per-tenant and aggregate) | Implemented, tested on synthetic data with known effects |
+| Digital twin: delayed standby, clones, replay, what-if | Implemented, run end to end on the development stack; no automated tests |
+| Verification engine and proposal state machine | Implemented; state machine and decision logic tested, live path run end to end |
+| Canary controller and rollback | Implemented; decision logic tested, live path run in pilot trials |
+| Rule-based proposer | Implemented, tested |
+| LLM agent | Implemented, tested against a scripted model; not yet run against the live API |
+| Web console | Implemented; every page checked in a browser against live data |
+| Scenario suite and evaluation harness | Implemented; single pilot trials only |
+| Kubernetes manifests | Written; not deployed |
+| Experimental evaluation | Not done. No results are claimed |
 
-An earlier prototype of this project is preserved at the git tag `v1-archive`.
-Its results are not evidence for this system.
+Known gaps against the design are listed in
+[ARCHITECTURE.md §14](docs/ARCHITECTURE.md#14-implementation-notes-where-the-build-differs-from-this-specification).
 
 ## 21. Research context
 

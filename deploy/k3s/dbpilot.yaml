@@ -1,0 +1,381 @@
+# DBPilot on a three-node k3s cluster: one node per plane.
+#
+# Status: written from the Compose stack, not yet applied to a real cluster.
+#
+# Why Kubernetes here: the twin replays real workload, and that load must never
+# land on the node serving tenants. A node label places each plane; a taint on
+# the twin node keeps everything else off it; equal requests and limits give the
+# databases the Guaranteed QoS class so they are not throttled or evicted first.
+#
+# Before applying, see README.md in this directory:
+#   kubectl label node <control-node> dbpilot.io/plane=control
+#   kubectl label node <data-node>    dbpilot.io/plane=data
+#   kubectl label node <twin-node>    dbpilot.io/plane=twin
+#   kubectl taint node <twin-node>    dbpilot.io/plane=twin:NoSchedule
+#   kubectl -n dbpilot create secret generic dbpilot-secrets --from-env-file=.env
+# and replace REGISTRY/…:TAG with your pushed images.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dbpilot
+---
+# Statement capture written by the primary, read by the collector and the twin
+# agent on other nodes. Needs a ReadWriteMany storage class (for example an NFS
+# provisioner); k3s's default local-path class is single-node and will not do.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: dp-logs, namespace: dbpilot}
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: nfs-client
+  resources: {requests: {storage: 20Gi}}
+---
+# ------------------------------------------------------------- control plane --
+apiVersion: v1
+kind: Service
+metadata: {name: control-db, namespace: dbpilot}
+spec:
+  clusterIP: None
+  selector: {app: control-db}
+  ports: [{port: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: control-db, namespace: dbpilot}
+spec:
+  serviceName: control-db
+  replicas: 1
+  selector: {matchLabels: {app: control-db}}
+  template:
+    metadata: {labels: {app: control-db, plane: control}}
+    spec:
+      nodeSelector: {dbpilot.io/plane: control}
+      containers:
+        - name: postgres
+          image: postgres:18
+          env:
+            - {name: POSTGRES_USER, value: dbpilot_owner}
+            - {name: POSTGRES_DB, value: dbpilot_control}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: CONTROL_DB_OWNER_PASSWORD}}
+          ports: [{containerPort: 5432}]
+          readinessProbe:
+            exec: {command: [pg_isready, -h, 127.0.0.1, -U, dbpilot_owner, -d, dbpilot_control]}
+            periodSeconds: 5
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 10Gi}}}
+---
+apiVersion: batch/v1
+kind: Job
+metadata: {name: migrate, namespace: dbpilot}
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      nodeSelector: {dbpilot.io/plane: control}
+      containers:
+        - name: migrate
+          image: REGISTRY/dbpilot-controlplane:TAG
+          command: [python, migrate.py]
+          envFrom: [{secretRef: {name: dbpilot-secrets}}]
+          env:
+            - {name: CONTROL_DB_OWNER_URL, value: "postgresql://dbpilot_owner:$(CONTROL_DB_OWNER_PASSWORD)@control-db:5432/dbpilot_control"}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: api, namespace: dbpilot}
+spec:
+  selector: {app: api}
+  ports: [{port: 8000}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: api, namespace: dbpilot}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: api}}
+  template:
+    metadata: {labels: {app: api, plane: control}}
+    spec:
+      nodeSelector: {dbpilot.io/plane: control}
+      containers:
+        - name: api
+          image: REGISTRY/dbpilot-controlplane:TAG
+          envFrom: [{secretRef: {name: dbpilot-secrets}}]
+          env:
+            - {name: CONTROL_DB_API_URL, value: "postgresql://dbpilot_api:$(CONTROL_DB_API_PASSWORD)@control-db:5432/dbpilot_control"}
+            - {name: TWIN_URL, value: "http://twin:8080"}
+            - {name: DP_MONITOR_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_MONITOR_PASSWORD}}}
+          ports: [{containerPort: 8000}]
+          readinessProbe: {httpGet: {path: /healthz, port: 8000}, periodSeconds: 5}
+          resources: {requests: {cpu: 250m, memory: 256Mi}, limits: {cpu: "1", memory: 512Mi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: collector, namespace: dbpilot}
+spec:
+  # One collector: it keeps the previous snapshot in memory to compute deltas.
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: collector}}
+  template:
+    metadata: {labels: {app: collector, plane: control}}
+    spec:
+      nodeSelector: {dbpilot.io/plane: control}
+      containers:
+        - name: collector
+          image: REGISTRY/dbpilot-controlplane:TAG
+          command: [python, -m, app.collector]
+          envFrom: [{secretRef: {name: dbpilot-secrets}}]
+          env:
+            - {name: CONTROL_DB_COLLECTOR_URL, value: "postgresql://dbpilot_collector:$(CONTROL_DB_COLLECTOR_PASSWORD)@control-db:5432/dbpilot_control"}
+            - {name: DP_MONITOR_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_MONITOR_PASSWORD}}}
+            - {name: DP_LOG_DIR, value: /var/log/dbpilot}
+          volumeMounts: [{name: dp-logs, mountPath: /var/log/dbpilot, readOnly: true}]
+      volumes: [{name: dp-logs, persistentVolumeClaim: {claimName: dp-logs}}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: engine, namespace: dbpilot}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: engine}}
+  template:
+    metadata: {labels: {app: engine, plane: control}}
+    spec:
+      nodeSelector: {dbpilot.io/plane: control}
+      containers:
+        - name: engine
+          image: REGISTRY/dbpilot-controlplane:TAG
+          command: [python, -m, app.engine]
+          envFrom: [{secretRef: {name: dbpilot-secrets}}]
+          env:
+            - {name: CONTROL_DB_ENGINE_URL, value: "postgresql://dbpilot_engine:$(CONTROL_DB_ENGINE_PASSWORD)@control-db:5432/dbpilot_control"}
+            - {name: TWIN_URL, value: "http://twin:8080"}
+            - {name: DP_EXECUTOR_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_OWNER_PASSWORD}}}
+            - {name: DP_POOLER_ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_PGBOUNCER_AUTH_PASSWORD}}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: web, namespace: dbpilot}
+spec:
+  selector: {app: web}
+  ports: [{port: 80}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: web, namespace: dbpilot}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: web}}
+  template:
+    metadata: {labels: {app: web, plane: control}}
+    spec:
+      nodeSelector: {dbpilot.io/plane: control}
+      containers:
+        - name: web
+          image: REGISTRY/dbpilot-web:TAG
+          ports: [{containerPort: 80}]
+          readinessProbe: {httpGet: {path: /, port: 80}}
+---
+# k3s ships Traefik as its ingress controller.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: dbpilot, namespace: dbpilot}
+spec:
+  rules:
+    - http:
+        paths:
+          - {path: /, pathType: Prefix, backend: {service: {name: web, port: {number: 80}}}}
+---
+# ---------------------------------------------------------------- data plane --
+apiVersion: v1
+kind: Service
+metadata: {name: dp-primary, namespace: dbpilot}
+spec:
+  clusterIP: None
+  selector: {app: dp-primary}
+  ports: [{port: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: dp-primary, namespace: dbpilot}
+spec:
+  serviceName: dp-primary
+  replicas: 1
+  selector: {matchLabels: {app: dp-primary}}
+  template:
+    metadata: {labels: {app: dp-primary, plane: data}}
+    spec:
+      nodeSelector: {dbpilot.io/plane: data}
+      # The log volume is created root-owned; PostgreSQL runs as uid 999.
+      securityContext: {fsGroup: 999}
+      containers:
+        - name: postgres
+          image: REGISTRY/dbpilot-dataplane:TAG
+          args:
+            - postgres
+            - -c
+            - shared_preload_libraries=pg_stat_statements,auto_explain
+            - -c
+            - track_io_timing=on
+            - -c
+            - shared_buffers=1GB
+            - -c
+            - max_connections=200
+            - -c
+            - wal_level=replica
+            - -c
+            - max_wal_senders=10
+            - -c
+            - wal_keep_size=2GB
+            - -c
+            - logging_collector=on
+            - -c
+            - log_destination=jsonlog
+            - -c
+            - log_directory=/var/log/dbpilot
+            - -c
+            - log_filename=pg-%M.log
+            - -c
+            - log_rotation_age=10min
+            - -c
+            - log_truncate_on_rotation=on
+            - -c
+            - log_min_duration_statement=0
+            - -c
+            - log_file_mode=0644
+          env:
+            - {name: POSTGRES_DB, value: app}
+            - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_OWNER_PASSWORD}}}
+            - {name: REPLICATION_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_REPLICATION_PASSWORD}}}
+            - {name: PGBOUNCER_AUTH_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_PGBOUNCER_AUTH_PASSWORD}}}
+            - {name: MONITOR_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_MONITOR_PASSWORD}}}
+          ports: [{containerPort: 5432}]
+          readinessProbe:
+            exec: {command: [pg_isready, -h, 127.0.0.1, -U, postgres, -d, app]}
+            periodSeconds: 5
+          # requests == limits: Guaranteed QoS. With the kubelet's static CPU manager
+          # these are four dedicated cores.
+          resources: {requests: {cpu: "4", memory: 6Gi}, limits: {cpu: "4", memory: 6Gi}}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql}
+            - {name: dp-logs, mountPath: /var/log/dbpilot}
+            - {name: shm, mountPath: /dev/shm}
+      volumes:
+        - {name: dp-logs, persistentVolumeClaim: {claimName: dp-logs}}
+        - {name: shm, emptyDir: {medium: Memory, sizeLimit: 1Gi}}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 50Gi}}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: dp-replica, namespace: dbpilot}
+spec:
+  clusterIP: None
+  selector: {app: dp-replica}
+  ports: [{port: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: dp-replica, namespace: dbpilot}
+spec:
+  serviceName: dp-replica
+  replicas: 1
+  selector: {matchLabels: {app: dp-replica}}
+  template:
+    metadata: {labels: {app: dp-replica, plane: data}}
+    spec:
+      nodeSelector: {dbpilot.io/plane: data}
+      containers:
+        - name: postgres
+          image: REGISTRY/dbpilot-dataplane:TAG
+          command: [replica-entrypoint.sh]
+          args: [postgres, -c, "shared_preload_libraries=pg_stat_statements,auto_explain", -c, shared_buffers=1GB, -c, hot_standby=on]
+          env:
+            - {name: PRIMARY_HOST, value: dp-primary}
+            - {name: REPLICATION_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_REPLICATION_PASSWORD}}}
+          ports: [{containerPort: 5432}]
+          resources: {requests: {cpu: "2", memory: 4Gi}, limits: {cpu: "2", memory: 4Gi}}
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 50Gi}}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: pgbouncer, namespace: dbpilot}
+spec:
+  selector: {app: pgbouncer}
+  ports: [{port: 6432}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: pgbouncer, namespace: dbpilot}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: pgbouncer}}
+  template:
+    metadata: {labels: {app: pgbouncer, plane: data}}
+    spec:
+      nodeSelector: {dbpilot.io/plane: data}
+      containers:
+        - name: pgbouncer
+          image: REGISTRY/dbpilot-pgbouncer:TAG
+          env:
+            - {name: PRIMARY_HOST, value: dp-primary}
+            - {name: REPLICA_HOST, value: dp-replica}
+            - {name: PGBOUNCER_AUTH_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_PGBOUNCER_AUTH_PASSWORD}}}
+          ports: [{containerPort: 6432}]
+---
+# ------------------------------------------------------ experimentation plane --
+apiVersion: v1
+kind: Service
+metadata: {name: twin, namespace: dbpilot}
+spec:
+  selector: {app: twin}
+  ports: [{port: 8080}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: twin, namespace: dbpilot}
+spec:
+  serviceName: twin
+  replicas: 1
+  selector: {matchLabels: {app: twin}}
+  template:
+    metadata: {labels: {app: twin, plane: twin}}
+    spec:
+      nodeSelector: {dbpilot.io/plane: twin}
+      # Only pods that tolerate the taint may run on the twin node, so nothing else shares it.
+      tolerations: [{key: dbpilot.io/plane, operator: Equal, value: twin, effect: NoSchedule}]
+      securityContext: {fsGroup: 999}
+      containers:
+        - name: agent
+          image: REGISTRY/dbpilot-twin:TAG
+          env:
+            - {name: PRIMARY_HOST, value: dp-primary}
+            - {name: DP_LOG_DIR, value: /var/log/dbpilot}
+            - {name: TWIN_DELAY_S, value: "900"}
+            - {name: REPLICATION_PASSWORD, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: DATAPLANE_REPLICATION_PASSWORD}}}
+            - {name: TWIN_TOKEN, valueFrom: {secretKeyRef: {name: dbpilot-secrets, key: TWIN_TOKEN}}}
+          ports: [{containerPort: 8080}]
+          # Room for the delayed standby, one clone at the primary's four cores, and the replayer.
+          resources: {requests: {cpu: "8", memory: 12Gi}, limits: {cpu: "8", memory: 12Gi}}
+          volumeMounts:
+            - {name: twin, mountPath: /twin}
+            - {name: dp-logs, mountPath: /var/log/dbpilot, readOnly: true}
+            - {name: shm, mountPath: /dev/shm}
+      volumes:
+        - {name: dp-logs, persistentVolumeClaim: {claimName: dp-logs}}
+        - {name: shm, emptyDir: {medium: Memory, sizeLimit: 2Gi}}
+  volumeClaimTemplates:
+    # Three copies of the database live here (source, base, working clone). An XFS or
+    # btrfs volume makes the clone copies near-instant through reflinks.
+    - metadata: {name: twin}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 200Gi}}}

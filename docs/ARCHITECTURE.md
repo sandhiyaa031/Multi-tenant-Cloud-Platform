@@ -249,3 +249,22 @@ not produce.
 | k3s | three-node plane isolation | required for evaluation |
 | Gradient boosting | rejection pre-screen | later |
 | Vector DB, agent frameworks, Kafka, CloudNativePG, BenchBase | no purpose in this design | not used |
+
+## 14. Implementation notes: where the build differs from this specification
+
+Recorded so that the specification and the code can be compared honestly.
+
+| Specification | As built | Why |
+|---|---|---|
+| A7 concurrency cap applied at the pooler | `ALTER ROLE … CONNECTION LIMIT`, then the pooler recycles its connections | One SQL statement with an exact inverse, and it can be reproduced on the twin, where there is no pooler |
+| A6 replica routing verified on the twin | Defined as an action, treated as advisory | A single twin instance has no replica to route to |
+| A8 query rewrite with twin evidence | Defined as an action, advisory, no twin evidence | Not built |
+| Canary staged per action (partition first, session fraction, replica first) | One stage for every action | Staging logic not built |
+| Six rollback triggers | Contract breach in 2 of 3 windows; lost telemetry; engine restart during canary | Error-spike, replica-lag and deviation-from-prediction triggers are not separate checks yet |
+| Twin delay about 15 minutes | Configurable; the development stack uses 60 seconds | Faster iteration; the Kubernetes manifest sets 900 |
+| Executor with its own least-privilege role | Connects as the database owner in the development stack | Not built |
+| Observations include waits, locks, sampled plans, workload-shift detection | Query statistics, instance counters, latency percentiles, on-demand plans, table profiles, settings | The rest is not built |
+| Prometheus for host metrics | Not added | Database telemetry is collected by DBPilot itself |
+| Calibration of the gate from the outcome ledger | Ledger and its summary exist; the gate does not yet read them | Needs evaluation data first |
+| Three nodes | One machine under Compose; Kubernetes manifests written, not deployed | No cluster was available |
+| Evaluation: ≥10 repetitions, ≥10-minute runs | Harness built; only single pilot trials have been run | Running the full matrix takes tens of hours on isolated hardware |

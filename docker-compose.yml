@@ -291,6 +291,26 @@ services:
     depends_on:
       - pgbouncer
 
+  # Evaluation harness: one scenario under one verification configuration. Run with:
+  #   docker compose run --rm evaluation --scenario S1_missing_index --config C4_twin_per_tenant
+  evaluation:
+    build: ./workload
+    profiles: ["eval"]
+    cpuset: "7-8"
+    entrypoint: ["python", "-m", "evaluation"]
+    environment:
+      API_URL: http://api:8000
+      DP_POOLER_HOST: pgbouncer
+      DP_TENANT_PASSWORD: ${DATAPLANE_TENANT_PASSWORD}
+      DEMO_ADMIN_EMAIL: ${DEMO_ADMIN_EMAIL:-admin@demo.dbpilot.dev}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD}
+      EVAL_WARM_S: ${EVAL_WARM_S:-150}
+    volumes:
+      - ./results:/results
+    depends_on:
+      - pgbouncer
+      - api
+
   # Run with: docker compose run --rm dp-test
   dp-test:
     build: *controlplane_build

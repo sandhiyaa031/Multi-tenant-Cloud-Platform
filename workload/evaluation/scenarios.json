@@ -1,0 +1,65 @@
+{
+  "_comment": "Each scenario is a workload plus one candidate action. 'expectation' states the hypothesis the scenario was designed to test, not a result: what actually happens is what the harness measures.",
+  "base_tenants": [
+    {"role": "t_steady",   "streams": [{"class": "OLTP", "rate": 20}]},
+    {"role": "t_bursty",   "streams": [{"class": "OLTP", "rate": 8, "burst": {"every_s": 60, "duration_s": 15, "multiplier": 6}}]},
+    {"role": "t_analytic", "streams": [{"class": "OLAP", "rate": 1.5}]},
+    {"role": "t_mixed",    "streams": [{"class": "OLTP", "rate": 10}, {"class": "OLAP", "rate": 0.8}]}
+  ],
+  "scenarios": {
+    "S1_missing_index": {
+      "description": "The analytical tenant runs item lookups that scan its whole order_line partition.",
+      "overrides": {"t_analytic": [{"class": "OLAP", "rate": 2.0, "only": ["item_sales"]}]},
+      "action": {"type": "create_index", "table": "order_line", "columns": ["ol_i_id"], "tenant_role": "t_analytic"},
+      "expectation": "benefits t_analytic; other tenants unaffected because the index is on t_analytic's partition only"
+    },
+    "S5_memory_role": {
+      "description": "Analytical sorts and hashes may spill to disk with the default sort memory.",
+      "overrides": {},
+      "action": {"type": "role_setting", "tenant_role": "t_analytic", "name": "work_mem", "value": "65536"},
+      "expectation": "benefits t_analytic if its queries spill; scoped to one tenant"
+    },
+    "S5_memory_instance": {
+      "description": "The same memory increase, applied to every connection of the instance.",
+      "overrides": {},
+      "action": {"type": "instance_setting", "name": "work_mem", "value": "65536"},
+      "expectation": "refused by static rules: worst-case memory exceeds the budget"
+    },
+    "S6_trap_index_all_tenants": {
+      "description": "The item index built for every tenant, so OLTP tenants pay to maintain it on every order line written.",
+      "overrides": {"t_analytic": [{"class": "OLAP", "rate": 2.0, "only": ["item_sales"]}]},
+      "action": {"type": "create_index", "table": "order_line", "columns": ["ol_i_id", "ol_amount", "ol_quantity", "ol_delivery_d"]},
+      "expectation": "benefits t_analytic; may tax OLTP tenants' writes"
+    },
+    "S7_trap_parallelism": {
+      "description": "More parallel workers per query, instance-wide, on a four-core instance shared with OLTP tenants.",
+      "overrides": {},
+      "action": {"type": "instance_setting", "name": "max_parallel_workers_per_gather", "value": "4"},
+      "expectation": "may speed analytical queries while taking CPU from OLTP tenants"
+    },
+    "S7_parallelism_scoped": {
+      "description": "The same change limited to the analytical tenant's role.",
+      "overrides": {},
+      "action": {"type": "role_setting", "tenant_role": "t_analytic", "name": "max_parallel_workers_per_gather", "value": "4"},
+      "expectation": "same question as S7, narrower scope"
+    },
+    "S3_noisy_neighbour_cap": {
+      "description": "The bursty tenant's periodic bursts; a cap on its concurrent connections.",
+      "overrides": {"t_bursty": [{"class": "OLTP", "rate": 10, "burst": {"every_s": 40, "duration_s": 15, "multiplier": 10}}]},
+      "action": {"type": "concurrency_cap", "tenant_role": "t_bursty", "max_connections": 3},
+      "expectation": "protects other tenants during bursts at the cost of the bursty tenant's own latency"
+    },
+    "S9_no_change": {
+      "description": "Nothing is wrong; a harmless statistics refresh stands in for an action with no expected effect.",
+      "overrides": {},
+      "action": {"type": "analyze", "table": "orders", "tenant_role": "t_steady"},
+      "expectation": "no measurable effect; should not be approved as a benefit"
+    }
+  },
+  "configurations": {
+    "C2_no_verification":  {"verification": "none",        "gate_mode": "per_tenant"},
+    "C3_canary_only":      {"verification": "canary_only", "gate_mode": "per_tenant"},
+    "C4_twin_per_tenant":  {"verification": "full",        "gate_mode": "per_tenant"},
+    "C4_twin_aggregate":   {"verification": "full",        "gate_mode": "aggregate"}
+  }
+}

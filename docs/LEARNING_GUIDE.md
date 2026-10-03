@@ -1,10 +1,9 @@
 # DBPilot Learning Guide
 
 For each component: what it is, why DBPilot uses it, how it works, where it sits
-in DBPilot, and how to explain it to a professor. Sections marked **Built** point
-at code you can read and run today. Sections marked **Designed** describe the
-frozen design in [ARCHITECTURE.md](ARCHITECTURE.md); they will gain code
-references as each milestone lands.
+in DBPilot, and how to explain it to a professor. Each section says whether the
+part is built and how far it has been verified; where something was written but
+not yet run for real, it says so.
 
 ---
 
@@ -82,7 +81,7 @@ and forgot-password answer identically for known and unknown emails.
 **Explain it.** "A stolen database dump gives no usable passwords or reset
 tokens, and removing a member locks them out on their next request."
 
-## 4. Query optimisation and EXPLAIN — Designed
+## 4. Query optimisation and EXPLAIN — Built
 
 **What.** The planner picks a plan (scan types, join order, join methods) using
 table statistics and cost settings. `EXPLAIN` shows the chosen plan;
@@ -94,8 +93,13 @@ table statistics and cost settings. `EXPLAIN` shows the chosen plan;
 means stale statistics. A sequential scan with a selective filter suggests a
 missing index. "Sort Method: external merge" means `work_mem` was too small.
 
-**In DBPilot.** Plans are an agent observation; tier T1 compares plans with and
-without a hypothetical index using HypoPG, which costs milliseconds.
+**In DBPilot.**
+- The Query Intelligence page shows the plan of any fingerprint. It is produced
+  with `EXPLAIN (GENERIC_PLAN)`, which can plan `$1`-style text without
+  parameter values, on the twin source and never on production
+  ([whatif.py](../twin/agent/whatif.py)).
+- Tier T1 registers a hypothetical index with HypoPG and compares planner cost
+  with and without it. No index is built; it takes milliseconds.
 
 **Explain it.** "T1 asks the planner what it would do; T2 measures what actually
 happens. T1 is cheap and sometimes wrong, which is why T2 exists."
@@ -133,55 +137,99 @@ telemetry with no proxy and no query tagging. The collector stores deltas, so a
 row means what a tenant did in one minute, and it runs with only the privileges
 that job needs."
 
-## 6. PgBouncer — Built (pooling and tenant-only login); caps and routing actions Designed
+## 6. PgBouncer — Built
 
 **What.** A connection pooler between clients and PostgreSQL.
 
-**Why.** PostgreSQL has no per-tenant resource groups. The pooler is the control
-point for per-tenant concurrency caps (A7), routing a tenant's reads to the
-replica (A6), and exposing a setting to only a fraction of sessions (canary).
+**Why.** It is the only door tenants use, which makes it the place to limit or
+redirect one tenant without touching the application.
 
 **How.** [entrypoint.sh](../dataplane/pgbouncer/entrypoint.sh) writes the config.
 Tenant roles are created at runtime, so PgBouncer looks up each one's SCRAM
 verifier through `pgbouncer.get_auth`, a function that answers only for tenant
 roles: the owner cannot be reached through the pooler. `app` points at the
-primary and `app_ro` at the replica. Pooling is per transaction.
+primary and `app_ro` at the replica. Pooling is per transaction. After a
+role-level change the engine issues `RECONNECT` on the admin console so server
+connections are recycled and pick up the new setting.
+
+**Limits to state.** The concurrency cap (A7) is applied with
+`ALTER ROLE … CONNECTION LIMIT` rather than a pooler setting. Replica routing
+(A6) is defined as an action but is advisory only: it cannot be reproduced on a
+single twin instance, so it is never auto-approved.
 
 **Explain it.** "It is the one place where DBPilot can limit or redirect a tenant
 without touching the application."
 
-## 7. Agentic AI and tool calling — Designed
+## 7. Agentic AI and tool calling — Built (not yet run against a live model)
 
 **What.** An LLM that is given functions it may call, decides which to call,
-reads the results and continues.
+reads the results and continues until it has an answer.
 
-**Why.** Diagnosis means combining plans, waits, statistics and history; that is
-where a language model helps.
+**Why.** Diagnosis means combining SLO status, expensive queries, plans, table
+profiles and history; that is where a language model helps.
 
-**How in DBPilot.** Tools are read-only (top queries, plan, table profile, wait
-profile, SLO status, what-if index, history). The agent's only output with effect
-is a JSON action matching the schema of A0–A8. A deterministic executor compiles
-it to SQL. The agent cannot approve its own proposal; verification is separate
-code. A rule-based proposer implements the same interface, which gives the
-baseline and lets everything run without an API key.
+**How** ([agent.py](../controlplane/app/proposers/agent.py)).
+- Ten read-only tools over the [Observer](../controlplane/app/observe.py): SLO
+  status, latency, top queries, tenant load, plan of a query, table profile,
+  current settings, what-if index, history, tenant list.
+- One tool with an effect: `propose_action`. Its input is validated against the
+  typed action space ([actions.py](../core/dbpilot_core/actions.py)). Invalid
+  input is returned to the model as an error so it can correct itself; it never
+  reaches a database.
+- The loop is bounded (14 turns). A refusal, a cut-off response, or an agent
+  that ends without proposing all become "no action, escalate to a human".
+- Every tool call and result is stored with the proposal, and shown in the Agent
+  Console, so a reviewer sees what the agent looked at.
+- A rule-based proposer ([rules.py](../controlplane/app/proposers/rules.py))
+  implements the same interface: it is the baseline, and it lets the whole
+  pipeline run without an API key.
+
+**What is and is not verified.** The loop is tested against a scripted model
+(tool use, error correction, refusal, turn limit). It has not yet been run
+against the live API in this project, because no API key was available.
 
 **Explain it.** "The model chooses among bounded actions; it never writes SQL
-that executes. If it hallucinates, the worst case is a rejected proposal."
+that executes, and it cannot approve its own proposal. If it hallucinates, the
+worst case is a rejected proposal."
 
-## 8. Digital twin — Designed
+## 8. Digital twin — Built
 
 **What.** A real PostgreSQL instance cloned from production, used to measure a
 change before production sees it.
 
-**How.** A delayed standby stays ~15 minutes behind production. On a proposal it
-is copied twice: control and treatment. The action is applied to treatment only;
-the last 15 minutes of captured workload are replayed against both; per-tenant
-differences go to the verification engine.
+**How** ([pg.py](../twin/agent/pg.py), [runner.py](../twin/agent/runner.py)).
+1. **Twin source.** A standby with `recovery_min_apply_delay`. WAL arrives
+   immediately but is applied late, so the standby is always at a known past
+   moment T0 for which the workload is already captured.
+2. **Freeze.** Replay is paused, the position (LSN) and time T0 are recorded, the
+   standby is stopped, its data directory is copied (`cp --reflink=auto`), and
+   it is restarted.
+3. **Clone.** Each arm gets a fresh copy, started with
+   `recovery_target_lsn = <that position>` and `recovery_target_action = promote`.
+   This matters: the copy contains WAL that had been received but not yet
+   applied; without a target it would roll forward to "now".
+4. **Warm.** Every relation is loaded with `pg_prewarm`, so both arms start with
+   the same warm cache. Before this, whichever arm ran first paid for cold reads
+   and looked about three times slower.
+5. **Apply.** The same executor used for production applies the action to the
+   treatment clone only.
+6. **Replay** ([replay.py](../twin/agent/replay.py)). Captured transactions run
+   at their original offsets from T0, as their original tenant role.
+7. **Repeat** with the arm order alternating (control–treatment,
+   treatment–control) so drift in the host falls on both arms alike.
+
+**What has been observed so far (development machine, not an evaluation).**
+- Replay errors are rare: a handful of duplicate-key errors per several thousand
+  transactions, from concurrent writes replaying in a slightly different order.
+- With no change in either arm, on a quiet machine, per-tenant p95 differed by a
+  few percent. When other work ran on the machine at the same time it differed by
+  up to about 25%. The noise floor is therefore something the evaluation must
+  measure, not assume.
 
 **Explain it.** "It is not a simulation. It is the same data, the same
-statistics and the same queries. And cloning for verification is not my
-invention — Azure SQL does it for indexes; my contribution is the per-tenant
-gate and measuring what the twin is worth."
+statistics and the same queries. Cloning for verification is not my invention —
+Azure SQL does it for indexes; my contribution is the per-tenant gate and
+measuring what the twin is worth."
 
 ## 9a. Workload driver — Built
 
@@ -206,71 +254,150 @@ the earlier prototype's measurements.
 waiting politely. Its measurements are the ground truth for evaluation and are
 kept separate from what DBPilot observes about itself."
 
-## 9b. Workload replay — Designed
+## 9b. Workload capture and replay — Built
 
-**What.** Re-executing captured production statements, with their parameters,
-timing and sessions, against another instance.
+**What.** PostgreSQL logs every statement with its duration and parameters as
+JSON (`log_min_duration_statement=0`, `log_destination=jsonlog`).
+[pglog.py](../core/dbpilot_core/pglog.py) reassembles that log into
+transactions: who ran it, when, which statements, with which parameters.
 
-**Why.** Only the real mix shows cross-tenant effects.
+**Why one capture, two uses.** The collector derives per-tenant latency
+percentiles from it (which `pg_stat_statements` cannot give), and the twin
+replays it.
 
-**Limits to state openly.** Concurrent writes do not replay deterministically;
-logging every statement has overhead; so replay error rate and capture overhead
-are measured and reported.
+**Details worth knowing.**
+- Statements are grouped by backend process id. Behind a transaction-mode
+  pooler a backend serves many clients but only one transaction at a time, so a
+  `BEGIN…COMMIT` on one pid is one client transaction.
+- The extended protocol logs parse, bind and execute separately; their durations
+  are added together.
+- The log has parameter values but not their types. Numbers are replayed as
+  bare numeric literals and everything else as quoted literals. A first version
+  quoted everything and a few analytical queries failed with a smallint overflow.
+- OLTP and OLAP are told apart by `application_name`, which the tenant's
+  connection sets.
 
-## 10. Verification and statistics — Designed
+**Limits to state openly.** Capturing every statement is expensive (about 75 MB
+per minute at the development workload) and its latency cost has not been
+measured yet. Concurrent writes do not replay deterministically.
 
-**What.** A decision rule over measured differences.
+## 10. Verification and statistics — Built
+
+**What.** A decision rule over measured differences
+([gate.py](../core/dbpilot_core/gate.py)).
 
 **Key ideas.**
-- *Confidence interval*: the range the true effect plausibly lies in.
-- *Superiority* for the target tenant: the whole interval shows improvement.
-- *Non-inferiority* for every other tenant: the whole interval lies below the
-  allowed regression. "Not significantly worse" is not the same thing and is not
-  accepted.
-- *Inconclusive* is its own outcome, never treated as safe.
+- *Ratio.* For each tenant and class: treatment p95 ÷ control p95. Below 1 is faster.
+- *Confidence interval by block bootstrap.* Latencies close in time are
+  correlated, so whole 5-second buckets are resampled, the same buckets for both
+  arms, 2,000 times.
+- *Superiority* for the target: the whole interval lies below 0.90.
+- *Non-inferiority* for every other tenant: the whole interval lies below 1.05.
+  "Not significantly worse" is not accepted.
+- *Bonferroni correction.* With several tenants compared at once, each
+  comparison uses a stricter level so the chance of any false "safe" stays at 5%.
+- *Three outcomes.* Harm shown → reject. Benefit shown and nobody harmed →
+  approve. Anything else, including too few samples → inconclusive, which is
+  escalated and never applied automatically.
+- *Budgets.* Storage growth and write amplification are absolute limits.
+- *SLOs.* Pushing a tenant across an objective it was meeting counts as harm even
+  inside the regression margin.
+- *Aggregate mode* judges only the pooled workload, as single-tenant tuners do.
+  It exists as the comparison point.
+
+The tests use synthetic latency streams with a known true effect, including the
+central case: target twice as fast, a neighbour 40% slower. The per-tenant gate
+rejects it; the aggregate gate approves it.
 
 **Explain it.** "A change is approved only if I can show it helps the target and
 can show it does not hurt each of the others."
 
-## 11. Canary deployment and rollback — Designed
+## 11. The engine: state machine, canary and rollback — Built
 
-**What.** Applying a change to a small part of production first and watching.
+**What.** A worker ([engine.py](../controlplane/app/engine.py)) that takes
+proposals through verification and, if approved, through a canary.
 
-**How.** What "small part" means depends on the action: one tenant's partition
-for an index, a fraction of sessions for a role setting, the replica first for a
-read-path instance setting. The canary enforces the rollback contract derived
-from the twin. Rollback runs the action's stored inverse and fires on contract
-breach, error spikes, lag, deviation from prediction, lost telemetry, or timeout.
+**State machine in the database**
+([007_proposals.sql](../controlplane/migrations/007_proposals.sql)). Legal
+transitions are rows in a table and a trigger enforces them. Even the database
+owner cannot move a proposal from PROPOSED straight to APPLIED, revive a
+rejected one, or edit an action after it was proposed. A partial unique index
+allows one canary per cluster at a time, so a regression can be attributed.
+
+**Queue.** The engine claims work with `FOR UPDATE SKIP LOCKED`, so several
+engines could share the queue without taking the same proposal.
+
+**Canary.**
+1. Baseline: each tenant's p95 in the collector windows just before the change.
+2. Apply with the executor; store the statements and their inverse.
+3. Each window: observed p95 ÷ baseline, compared with the contract (the twin's
+   prediction plus a tolerance, or a default limit if there was no twin).
+4. Roll back if the contract is breached in two of three windows, or telemetry
+   is missing for two windows. Otherwise mark APPLIED.
+
+**Crash recovery.** If the engine starts and finds a proposal in CANARY, the
+previous engine died while a change was live and unobserved. It rolls the change
+back. Unobserved is treated as unsafe.
+
+**Limits to state.** Canary staging is a single stage; fractional session
+exposure for role settings is not implemented. The executor connects as the
+database owner in the development stack.
 
 **Explain it.** "The twin predicts; the canary checks the prediction against
-reality on limited scope; rollback is automatic and each action has a defined
-inverse."
+reality; rollback is automatic and each action has a defined inverse."
 
 ## 12. Docker and Compose — Built
 
 **What.** A container packages a process with its dependencies; Compose starts
 several containers as one system.
 
-**In DBPilot.** [docker-compose.yml](../docker-compose.yml) runs the
-control-plane database, a one-shot migration job and the API. `depends_on` with
-health conditions gives the order: database healthy → migrations done → API.
+**In DBPilot.** [docker-compose.yml](../docker-compose.yml) runs all three planes
+on one machine: control (control-db, migrate, api, collector, engine, web), data
+(dp-primary, dp-replica, pgbouncer) and experimentation (twin). `cpuset` pins
+planes to different cores.
+
+**What one machine cannot give.** The planes still share the disk and the
+virtual machine. Production latency visibly rises while a twin run is in
+progress. That is the reason for the three-node design, not a detail.
 
 **Explain it.** "One command reproduces the environment, including the database
-version and extensions."
+version and extensions. Isolation between planes needs separate nodes."
 
-## 13. Kubernetes (k3s) — Designed
+## 13. Kubernetes (k3s) — Written, not yet deployed
 
-**Why here.** Three planes on three nodes; a taint on the twin node guarantees
-replay load never lands next to production. That is the specific value;
-Kubernetes is not used where Compose suffices.
+**Why here.** Three planes on three nodes. A node label places each plane; a
+taint on the twin node guarantees replay load never lands next to production;
+equal requests and limits give the databases Guaranteed QoS.
 
-## 14. Observability — Designed
+**Where.** [deploy/k3s/](../deploy/k3s/). The manifests parse as valid YAML and
+mirror the Compose stack, but have not been applied to a cluster. One
+prerequisite differs from Compose: the statement-log volume is written on the
+data node and read on the other two, so it needs a ReadWriteMany storage class.
 
-Prometheus scrapes host and container metrics. Database-level telemetry is
-collected by DBPilot itself into the control-plane database, because it must be
-per-tenant and joined with proposals.
+## 14. Observability — Built (database telemetry); host metrics not yet added
 
-## 15. Cloud architecture — Designed
+Database-level telemetry is collected by DBPilot itself into the control-plane
+database, because it must be per-tenant and joined with proposals: query
+statistics, instance counters and latency percentiles, served by the API and
+drawn by the UI. Prometheus for host and container metrics is in the design and
+has not been added.
+
+## 15. The web console — Built
+
+**What.** A React application ([web/](../web/)) served by nginx, which also
+proxies `/api` so the browser talks to one origin.
+
+**Rule it follows.** Every value on screen is read from the API. Pages show an
+explicit empty state when there is no data rather than a placeholder number.
+The Experiments page is computed from the outcome ledger.
+
+**Where authorization lives.** The UI hides buttons a role cannot use, but that
+is a convenience. The API checks the role, and PostgreSQL checks it again.
+
+**Explain it.** "The interface cannot grant anything. Hiding a button is not
+security; the database refusing the write is."
+
+## 16. Cloud architecture — Built on one machine, designed for three nodes
 
 Control plane, data plane and experimentation plane, as in
 [ARCHITECTURE.md](ARCHITECTURE.md) §3. The separation is what lets the system
@@ -283,7 +410,7 @@ experiment without distorting what it measures.
 ```bash
 docker compose up -d --build
 docker compose run --rm dp-seed                                # load the four tenants (~5 min)
-docker compose run --rm --no-deps api python -m pytest -q     # 51 control-plane tests
+docker compose run --rm --no-deps api python -m pytest -q     # control plane, core, proposers
 docker compose run --rm dp-test                                # 18 data-plane tests
 docker compose run --rm demo-seed                              # register the tenants as a demo organization
 docker compose run --rm workload --duration 180                # generate load; the collector records it

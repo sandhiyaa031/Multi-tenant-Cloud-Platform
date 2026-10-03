@@ -35,6 +35,7 @@ services:
       CONTROL_DB_OWNER_URL: postgresql://dbpilot_owner:${CONTROL_DB_OWNER_PASSWORD}@control-db:5432/dbpilot_control
       CONTROL_DB_API_PASSWORD: ${CONTROL_DB_API_PASSWORD:?set in .env}
       CONTROL_DB_COLLECTOR_PASSWORD: ${CONTROL_DB_COLLECTOR_PASSWORD:?set in .env}
+      CONTROL_DB_ENGINE_PASSWORD: ${CONTROL_DB_ENGINE_PASSWORD:?set in .env}
     depends_on:
       control-db:
         condition: service_healthy
@@ -49,10 +50,18 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set in .env}
       PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:5173}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      # The LLM agent. Without a key, the rule-based proposer still works.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AGENT_MODEL: ${AGENT_MODEL:-claude-opus-5-5}
       # Tests only: the collector integration test runs inside this image.
       CONTROL_DB_COLLECTOR_URL: postgresql://dbpilot_collector:${CONTROL_DB_COLLECTOR_PASSWORD}@control-db:5432/dbpilot_control
       DP_MONITOR_PASSWORD: ${DATAPLANE_MONITOR_PASSWORD}
       DP_TENANT_PASSWORD: ${DATAPLANE_TENANT_PASSWORD}
+      CONTROL_DB_ENGINE_URL: postgresql://dbpilot_engine:${CONTROL_DB_ENGINE_PASSWORD}@control-db:5432/dbpilot_control
+      TWIN_URL: http://twin:8080
+      TWIN_TOKEN: ${TWIN_TOKEN}
+      DP_EXECUTOR_PASSWORD: ${DATAPLANE_OWNER_PASSWORD}
+      DP_POOLER_ADMIN_PASSWORD: ${DATAPLANE_PGBOUNCER_AUTH_PASSWORD}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -70,6 +79,24 @@ services:
       DP_LOG_DIR: /var/log/dbpilot
     volumes:
       - dp-logs:/var/log/dbpilot:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # VERIFY / CANARY: takes proposals through the tiers and applies approved ones.
+  engine:
+    build: *controlplane_build
+    command: ["python", "-m", "app.engine"]
+    environment:
+      CONTROL_DB_ENGINE_URL: postgresql://dbpilot_engine:${CONTROL_DB_ENGINE_PASSWORD}@control-db:5432/dbpilot_control
+      TWIN_URL: http://twin:8080
+      TWIN_TOKEN: ${TWIN_TOKEN}
+      TWIN_WINDOW_S: ${TWIN_WINDOW_S:-120}
+      TWIN_REPETITIONS: ${TWIN_REPETITIONS:-2}
+      COLLECT_INTERVAL_S: ${COLLECT_INTERVAL_S:-60}
+      DP_EXECUTOR_PASSWORD: ${DATAPLANE_OWNER_PASSWORD}
+      DP_POOLER_ADMIN_PASSWORD: ${DATAPLANE_PGBOUNCER_AUTH_PASSWORD}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -213,6 +240,34 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # ---- Experimentation plane -------------------------------------------------
+
+  # Twin node agent: a delayed standby of the primary plus ephemeral clones.
+  # It has its own cores; the clone it measures is pinned to four of them, the
+  # same number the primary has.
+  twin:
+    build:
+      context: .
+      dockerfile: twin/Dockerfile
+    cpuset: "12-19"
+    mem_limit: 8g
+    shm_size: 2g
+    environment:
+      PRIMARY_HOST: dp-primary
+      REPLICATION_PASSWORD: ${DATAPLANE_REPLICATION_PASSWORD}
+      TWIN_TOKEN: ${TWIN_TOKEN:?set in .env}
+      TWIN_DELAY_S: ${TWIN_DELAY_S:-180}
+      TWIN_INSTANCE_CPUS: "12-15"
+      DP_LOG_DIR: /var/log/dbpilot
+    volumes:
+      - twin-data:/twin
+      - dp-logs:/var/log/dbpilot:ro
+    depends_on:
+      dp-primary:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8090:8080"
+
   # Open-loop load generator. Run with:
   #   docker compose run --rm workload --duration 120 --out /results/run.jsonl
   workload:
@@ -246,4 +301,5 @@ volumes:
   control-db-data:
   dp-primary-data:
   dp-logs:
+  twin-data:
   dp-replica-data:

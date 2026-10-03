@@ -39,6 +39,18 @@ def test_anything_outside_the_action_space_is_rejected(payload):
         parse_action(payload)
 
 
+@pytest.mark.parametrize("payload", [
+    {"type": "role_setting", "tenant_role": "t_analytic", "name": "work_mem", "value": "65536"},
+    {"type": "instance_setting", "name": "random_page_cost", "value": "1.1"},
+    {"type": "create_index", "table": "order_line", "columns": ["ol_i_id"], "tenant_role": "t_analytic"},
+    {"type": "concurrency_cap", "tenant_role": "t_bursty", "max_connections": 4},
+])
+def test_a_stored_action_parses_back_to_itself(payload):
+    """Actions are stored normalised and re-validated by the engine before every use."""
+    stored = parse_action(payload).model_dump()
+    assert parse_action(stored).model_dump() == stored
+
+
 def test_schema_is_exportable_for_tool_calling():
     schema = action_json_schema()
     assert "create_index" in str(schema) and "discriminator" in schema

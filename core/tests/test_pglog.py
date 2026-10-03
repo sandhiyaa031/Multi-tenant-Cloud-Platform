@@ -23,7 +23,7 @@ def test_reassembles_a_transaction_with_parameters():
     stmt = txn.statements[0]
     assert stmt.duration_ms == 1.3  # parse + bind + execute
     assert stmt.query_id == 42
-    assert stmt.literal_sql() == "UPDATE ch.warehouse SET w_ytd = w_ytd + '12.50' WHERE w_id = '3'"
+    assert stmt.literal_sql() == "UPDATE ch.warehouse SET w_ytd = w_ytd + 12.50 WHERE w_id = 3"
     # From the start of BEGIN to the end of COMMIT.
     assert round(txn.duration_ms, 2) == 20.05
 
@@ -32,8 +32,11 @@ def test_literal_substitution_handles_quotes_nulls_and_two_digit_placeholders():
     params = {i: f"'v{i}'" for i in range(1, 12)}
     params[2] = "'O''Brien'"
     params[3] = "NULL"
-    stmt = Statement("SELECT $1, $2, $3, $10, $11", params, 1.0, None)
-    assert stmt.literal_sql() == "SELECT 'v1', 'O''Brien', NULL, 'v10', 'v11'"
+    params[4] = "'100000'"
+    params[5] = "'5%'"
+    stmt = Statement("SELECT $1, $2, $3, $10, $11, $4, $5", params, 1.0, None)
+    # Numbers become bare literals (as a driver binds them); everything else stays quoted.
+    assert stmt.literal_sql() == "SELECT 'v1', 'O''Brien', NULL, 'v10', 'v11', 100000, '5%'"
 
 
 def test_interleaved_backends_are_kept_apart():

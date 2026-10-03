@@ -50,7 +50,8 @@ class Setting:
             if value not in ("on", "off"):
                 raise ValueError("must be 'on' or 'off'")
             return value
-        number = float(value)
+        # Accept an already-normalised value ("65536kB"), so stored actions re-validate.
+        number = float(value.removesuffix(self.unit) if self.unit else value)
         if not self.lo <= number <= self.hi:
             raise ValueError(f"must be between {self.lo:g} and {self.hi:g}{self.unit}")
         return f"{int(number)}{self.unit}" if self.kind == "int" else f"{number:g}"

@@ -22,6 +22,7 @@ from typing import Iterator
 _MESSAGE = re.compile(r"^duration: ([\d.]+) ms(?:  (statement|execute|parse|bind) ?([^:]*): (.*))?$", re.S)
 _PARAM = re.compile(r"\$(\d+) = (NULL|'(?:[^']|'')*')")
 _PLACEHOLDER = re.compile(r"\$(\d+)")
+_NUMERIC = re.compile(r"^'(-?\d+(?:\.\d+)?)'$")
 _END = {"COMMIT", "ROLLBACK", "END", "ABORT"}
 
 
@@ -35,10 +36,20 @@ class Statement:
     def literal_sql(self) -> str:
         """The statement with its parameters written in as literals, ready to re-execute.
 
-        An untyped quoted literal is resolved by PostgreSQL exactly like an
-        untyped bound parameter, so this reproduces the original statement.
+        The log records parameter values but not their types. Client drivers
+        bind numbers as numeric types, so a value that looks like a number is
+        written as a bare numeric literal and everything else as a quoted one.
+        This is an approximation: a text parameter consisting only of digits
+        would be re-typed. It is one of the measured sources of replay error.
         """
-        return _PLACEHOLDER.sub(lambda m: self.params.get(int(m.group(1)), m.group(0)), self.sql)
+        def literal(match: re.Match) -> str:
+            value = self.params.get(int(match.group(1)))
+            if value is None:
+                return match.group(0)
+            numeric = _NUMERIC.match(value)
+            return numeric.group(1) if numeric else value
+
+        return _PLACEHOLDER.sub(literal, self.sql)
 
 
 @dataclass

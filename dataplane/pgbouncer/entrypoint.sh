@@ -27,7 +27,8 @@ max_prepared_statements = 200
 max_client_conn = 2000
 default_pool_size = 20
 ignore_startup_parameters = extra_float_digits,options
-stats_users = pgbouncer_auth
+; Lets the engine ask for server connections to be recycled after a role-level change.
+admin_users = pgbouncer_auth
 INI
 
 exec pgbouncer /etc/pgbouncer/pgbouncer.ini

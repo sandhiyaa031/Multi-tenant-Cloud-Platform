@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.db import pool
-from app.routers import audit, auth, members, resources, telemetry
+from app.routers import audit, auth, members, proposals, resources, telemetry
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("dbpilot.api")
@@ -33,6 +33,7 @@ SQLSTATE_STATUS = {
     "23514": 422,  # check_violation
     "42501": status.HTTP_403_FORBIDDEN,  # insufficient_privilege, incl. RLS WITH CHECK
     "DP001": status.HTTP_409_CONFLICT,  # last ADMIN guard
+    "DP003": status.HTTP_409_CONFLICT,  # illegal proposal transition
 }
 
 
@@ -60,6 +61,8 @@ async def database_error(request: Request, exc: psycopg.Error):
         return JSONResponse({"detail": "internal error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
     if exc.sqlstate == "DP001":
         detail = "an organization must keep at least one ADMIN"
+    elif exc.sqlstate == "DP003":
+        detail = "that change is not allowed for a proposal in its current state"
     elif exc.sqlstate == "42501":
         detail = "not permitted"
     else:
@@ -80,3 +83,4 @@ app.include_router(members.router, prefix=API_PREFIX)
 app.include_router(resources.router, prefix=API_PREFIX)
 app.include_router(audit.router, prefix=API_PREFIX)
 app.include_router(telemetry.router, prefix=API_PREFIX)
+app.include_router(proposals.router, prefix=API_PREFIX)

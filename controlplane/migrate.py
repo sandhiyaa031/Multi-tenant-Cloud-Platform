@@ -15,6 +15,7 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 SERVICE_ROLES = {
     "dbpilot_api": "CONTROL_DB_API_PASSWORD",
     "dbpilot_collector": "CONTROL_DB_COLLECTOR_PASSWORD",
+    "dbpilot_engine": "CONTROL_DB_ENGINE_PASSWORD",
 }
 # Arbitrary constant: two migrators started together must not interleave.
 ADVISORY_LOCK_KEY = 728_140_001

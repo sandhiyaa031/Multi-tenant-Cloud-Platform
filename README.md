@@ -282,7 +282,7 @@ so demoting or removing a member takes effect immediately.
 | Component | Role |
 |---|---|
 | Primary (PostgreSQL 18) | Serves tenant reads and writes; `pg_stat_statements`, `auto_explain` and HypoPG loaded |
-| Replica | Hot standby by streaming replication; target for read routing |
+| Replica | Hot standby by streaming replication through a replication slot, so the primary keeps the WAL it needs while it is stopped (up to 8 GB); target for read routing |
 | PgBouncer | Connection pooler in transaction mode; the only way tenants connect |
 | Seed job | Provisions four tenants and loads their data |
 
@@ -671,6 +671,33 @@ docker-compose.yml
 | Scenario suite and evaluation harness | Implemented; single pilot trials only |
 | Kubernetes manifests | Written; not deployed |
 | Experimental evaluation | Not done. No results are claimed |
+
+### Pilot observations (not results)
+
+Three single trials were run to check that the harness and the loop work end to
+end. Each is one run, on one machine where the planes share disk and CPU, with
+the twin's replay window shortened to 55 seconds and two repetitions. They show
+that the pipeline runs; they do not support any claim about how well it works.
+
+| Scenario | Configuration | Outcome | What was measured |
+|---|---|---|---|
+| Missing index for the analytical tenant | Twin, per-tenant gate | INCONCLUSIVE, not applied | Twin: target p95 0.017× of control (interval 0.014–0.020). One neighbour class, `t_mixed/OLAP`, had interval 0.63–1.06, which does not rule out a regression above 5% |
+| Instance-wide parallelism (trap) | No verification | APPLIED, later rolled back by the harness | Client-side p95 while live was 1.27×–1.59× of the minutes before, for all five tenant/class pairs |
+| Instance-wide parallelism (trap) | Twin, per-tenant gate | INCONCLUSIVE, not applied | Twin ratios 1.03×–1.12×; every interval straddles the 5% margin (for example `t_analytic/OLAP` 0.90–1.23) |
+
+What these do and do not show:
+
+- In both verified trials the change was kept out of production. In neither did
+  the gate reach a firm APPROVE or REJECT: with this replay window the
+  intervals are too wide to demonstrate non-inferiority for every tenant.
+  Whether the 15-minute window in the design narrows them enough is an open
+  question for the evaluation.
+- The twin did not reproduce the size of the slowdown seen in production for
+  the parallelism trap (about 1.05× against about 1.3×). The production figure
+  is a before/after comparison with no concurrent control, so part of it may be
+  drift on the machine; equally, the twin may under-predict. One trial cannot
+  tell these apart.
+- Replay errors were 4 of 2,948 transactions and 0 of 2,928.
 
 Known gaps against the design are listed in
 [ARCHITECTURE.md §14](docs/ARCHITECTURE.md#14-implementation-notes-where-the-build-differs-from-this-specification).

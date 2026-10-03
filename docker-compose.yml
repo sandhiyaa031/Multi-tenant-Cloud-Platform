@@ -157,6 +157,9 @@ services:
       - max_wal_senders=10
       - -c
       - wal_keep_size=2GB
+      # Upper bound on WAL held back for a stopped standby's replication slot.
+      - -c
+      - max_slot_wal_keep_size=8GB
       - -c
       - max_wal_size=4GB
       - -c

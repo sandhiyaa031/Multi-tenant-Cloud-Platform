@@ -225,6 +225,16 @@ change before production sees it.
   few percent. When other work ran on the machine at the same time it differed by
   up to about 25%. The noise floor is therefore something the evaluation must
   measure, not assume.
+- In three pilot trials (55-second replay window, two repetitions) both
+  twin-verified proposals ended INCONCLUSIVE: the target's improvement was
+  clear, but at least one neighbour's interval was too wide to show it was not
+  harmed. That is the gate treating "uncertain" as "not safe". It also means
+  the window and repetition count decide how often the twin can give a firm
+  answer, which the evaluation has to measure.
+- A standby that is stopped for long falls behind the WAL the primary keeps and
+  can never catch up. The read replica therefore uses a replication slot
+  ([replica-entrypoint.sh](../dataplane/postgres/replica-entrypoint.sh)), with
+  `max_slot_wal_keep_size` so a dead standby cannot fill the primary's disk.
 
 **Explain it.** "It is not a simulation. It is the same data, the same
 statistics and the same queries. Cloning for verification is not my invention —

@@ -1,10 +1,13 @@
 FROM python:3.12-slim
 
 WORKDIR /srv
-COPY requirements.txt requirements-dev.txt ./
+COPY controlplane/requirements.txt controlplane/requirements-dev.txt ./
 RUN pip install --no-cache-dir -r requirements-dev.txt
 
-COPY . .
+COPY controlplane/ .
+# Shared with the twin agent: the typed action space and the safety gate.
+COPY core/dbpilot_core ./dbpilot_core
+COPY core/tests ./core_tests
 
 RUN useradd --system --no-create-home dbpilot
 USER dbpilot

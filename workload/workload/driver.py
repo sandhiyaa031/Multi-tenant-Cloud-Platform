@@ -194,14 +194,18 @@ async def run(profile: dict, dsn_for: Callable[[str], str], duration_s: float, o
             role = tenant["role"]
             # prepare_threshold=None: no server-side prepared statements, which a
             # transaction-mode pooler cannot keep attached to one server connection.
-            pool = AsyncConnectionPool(
-                dsn_for(role), min_size=2, max_size=pool_size, open=False,
-                kwargs={"prepare_threshold": None, "autocommit": True},
-            )
-            await pool.open(wait=True, timeout=30)
-            pools[role] = pool
-            ctx = await load_ctx(pool, role)
+            ctx = None
             for s in tenant["streams"]:
+                # One pool per class, labelled with application_name the way a real
+                # application tags its connections; DBPilot reads the label from the
+                # statement log to separate OLTP from OLAP.
+                pool = AsyncConnectionPool(
+                    dsn_for(role) + f" application_name={s['class'].lower()}", min_size=2, max_size=pool_size,
+                    open=False, kwargs={"prepare_threshold": None, "autocommit": True},
+                )
+                await pool.open(wait=True, timeout=30)
+                pools[f"{role}/{s['class']}"] = pool
+                ctx = ctx or await load_ctx(pool, role)
                 tasks.append(
                     asyncio.create_task(
                         stream(ctx, s["class"], burst_rate(s["rate"], s.get("burst")), pool, recorder,

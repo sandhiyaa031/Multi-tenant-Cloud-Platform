@@ -120,3 +120,24 @@ def test_collector_attributes_activity_to_the_right_tenant(client, org, other_or
     # Another organization cannot read this cluster's telemetry.
     for path in ("top-queries", "tenant-load", "instance"):
         assert client.get(f"/api/v1/clusters/{cluster_id}/{path}", headers=other_org.admin).json() == []
+
+
+def test_latency_rows_summarise_per_role_and_class():
+    from datetime import datetime, timedelta, timezone
+
+    from app.collector import latency_rows
+    from dbpilot_core.pglog import Transaction
+
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def txn(user, app, ms, failed=False):
+        return Transaction(user=user, app=app, pid=1, start=t0, end=t0 + timedelta(milliseconds=ms), failed=failed)
+
+    rows = latency_rows(
+        [txn("t_a", "oltp", ms) for ms in range(1, 101)]
+        + [txn("t_a", "oltp", 5000, failed=True), txn("t_a", "olap", 300), txn("t_b", "oltp", 7)]
+    )
+    count, failed, mean, p50, p95, p99 = rows[("t_a", "OLTP")]
+    assert (count, failed) == (100, 1)          # the failed one is counted but not timed
+    assert round(mean, 1) == 50.5 and round(p50, 1) == 50.5 and round(p99) == 99
+    assert rows[("t_a", "OLAP")][0] == 1 and rows[("t_b", "OLTP")][3] == 7

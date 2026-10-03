@@ -17,8 +17,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
+import numpy as np
 import psycopg
 from psycopg.rows import dict_row
+
+from dbpilot_core.pglog import LogTailer, Transaction
 
 log = logging.getLogger("dbpilot.collector")
 
@@ -68,6 +71,22 @@ def counter_delta(current: dict, previous: dict | None, fields: tuple[str, ...])
     return delta if delta[fields[0]] > 0 else None
 
 
+def latency_rows(transactions: list[Transaction]) -> dict[tuple[str, str], tuple]:
+    """Summarises transactions per (database role, query class):
+    (count, failed, mean, p50, p95, p99), over the successful ones."""
+    grouped: dict[tuple[str, str], list[Transaction]] = {}
+    for txn in transactions:
+        grouped.setdefault((txn.user, txn.query_class), []).append(txn)
+    out = {}
+    for key, txns in grouped.items():
+        ok = np.asarray([t.duration_ms for t in txns if not t.failed])
+        if len(ok) == 0:
+            continue
+        p50, p95, p99 = (float(x) for x in np.percentile(ok, [50, 95, 99]))
+        out[key] = (len(ok), len(txns) - len(ok), float(ok.mean()), p50, p95, p99)
+    return out
+
+
 @dataclass
 class ClusterState:
     """The previous snapshot of one cluster, kept in memory between cycles."""
@@ -78,11 +97,19 @@ class ClusterState:
 
 
 class Collector:
-    def __init__(self, control_url: str, monitor_user: str, monitor_password: str):
+    def __init__(self, control_url: str, monitor_user: str, monitor_password: str,
+                 log_dir: str | None = None, log_host: str | None = None):
         self.control_url = control_url
         self.monitor_user = monitor_user
         self.monitor_password = monitor_password
         self.state: dict[UUID, ClusterState] = {}
+        # The statement log of one data plane, identified by its primary's host name.
+        self.log_host = log_host
+        self.tailer = LogTailer(log_dir) if log_dir else None
+        self.log_read_at: datetime | None = None
+        if self.tailer:
+            self.tailer.read_new()  # skip history: only measure from now on
+            self.log_read_at = datetime.now(timezone.utc)
 
     def collect_once(self) -> int:
         """Snapshots every reachable cluster. Returns the number of query_stats rows written."""
@@ -92,6 +119,7 @@ class Collector:
                 "SELECT id, org_id, primary_host, primary_port, database_name FROM cp.clusters"
                 " WHERE primary_host IS NOT NULL AND status <> 'RETIRED'"
             ).fetchall()
+            self._collect_latency(control, clusters)
             for cluster in clusters:
                 try:
                     written += self._collect_cluster(control, cluster)
@@ -101,6 +129,30 @@ class Collector:
                     control.rollback()
                     log.exception("collection failed for cluster %s", cluster["id"])
         return written
+
+    def _collect_latency(self, control: psycopg.Connection, clusters: list[dict]) -> None:
+        if not self.tailer:
+            return
+        now = datetime.now(timezone.utc)
+        rows = latency_rows(self.tailer.read_new())
+        window = (self.log_read_at, now)
+        self.log_read_at = now
+        for cluster in clusters:
+            if cluster["primary_host"] != self.log_host:
+                continue
+            tenants = {
+                r["db_role"]: r["id"]
+                for r in control.execute("SELECT id, db_role FROM cp.tenants WHERE cluster_id = %s", (cluster["id"],))
+            }
+            with control.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO cp.latency_stats (org_id, cluster_id, tenant_id, query_class, window_start,"
+                    " window_end, txn_count, failed_count, mean_ms, p50_ms, p95_ms, p99_ms)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    [(cluster["org_id"], cluster["id"], tenants[role], cls, *window, *stats)
+                     for (role, cls), stats in rows.items() if role in tenants],
+                )
+        control.commit()
 
     def _snapshot(self, cluster: dict) -> ClusterState:
         with psycopg.connect(
@@ -171,6 +223,8 @@ def from_env() -> Collector:
         control_url=os.environ["CONTROL_DB_COLLECTOR_URL"],
         monitor_user=os.environ.get("DP_MONITOR_USER", "dbpilot_monitor"),
         monitor_password=os.environ["DP_MONITOR_PASSWORD"],
+        log_dir=os.environ.get("DP_LOG_DIR"),
+        log_host=os.environ.get("DP_LOG_HOST", "dp-primary"),
     )
 
 

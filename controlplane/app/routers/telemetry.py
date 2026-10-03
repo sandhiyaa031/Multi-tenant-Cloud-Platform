@@ -52,6 +52,41 @@ class InstancePoint(BaseModel):
     database_bytes: int
 
 
+class LatencyPoint(BaseModel):
+    tenant_id: UUID
+    tenant: str
+    query_class: str
+    window_end: datetime
+    txn_count: int
+    failed_count: int
+    mean_ms: float
+    p50_ms: float
+    p95_ms: float
+    p99_ms: float
+
+
+@router.get("/latency", response_model=list[LatencyPoint])
+async def latency(
+    cluster_id: UUID,
+    minutes: int = Query(default=60, ge=1, le=1440),
+    principal: Principal = Depends(require_role("VIEWER")),
+):
+    """Server-side transaction latency per tenant and class, from the statement log."""
+    async with principal.tx() as conn:
+        cur = await conn.execute(
+            """
+            SELECT l.tenant_id, t.name AS tenant, l.query_class, l.window_end, l.txn_count, l.failed_count,
+                   l.mean_ms, l.p50_ms, l.p95_ms, l.p99_ms
+            FROM cp.latency_stats l
+            JOIN cp.tenants t ON t.id = l.tenant_id
+            WHERE l.cluster_id = %s AND l.window_end > now() - make_interval(mins => %s)
+            ORDER BY l.window_end, t.name, l.query_class
+            """,
+            (cluster_id, minutes),
+        )
+        return await cur.fetchall()
+
+
 @router.get("/top-queries", response_model=list[TopQuery])
 async def top_queries(
     cluster_id: UUID,

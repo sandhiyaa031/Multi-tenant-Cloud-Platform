@@ -27,7 +27,9 @@ services:
       - "127.0.0.1:5440:5432"
 
   migrate:
-    build: ./controlplane
+    build: &controlplane_build
+      context: .
+      dockerfile: controlplane/Dockerfile
     command: ["python", "migrate.py"]
     environment:
       CONTROL_DB_OWNER_URL: postgresql://dbpilot_owner:${CONTROL_DB_OWNER_PASSWORD}@control-db:5432/dbpilot_control
@@ -39,7 +41,7 @@ services:
     restart: "no"
 
   api:
-    build: ./controlplane
+    build: *controlplane_build
     environment:
       CONTROL_DB_API_URL: postgresql://dbpilot_api:${CONTROL_DB_API_PASSWORD}@control-db:5432/dbpilot_control
       # Tests only: lets them assert facts the API role is forbidden to see.
@@ -59,12 +61,15 @@ services:
 
   # OBSERVE: snapshots data-plane statistics into the control-plane database.
   collector:
-    build: ./controlplane
+    build: *controlplane_build
     command: ["python", "-m", "app.collector"]
     environment:
       CONTROL_DB_COLLECTOR_URL: postgresql://dbpilot_collector:${CONTROL_DB_COLLECTOR_PASSWORD}@control-db:5432/dbpilot_control
       DP_MONITOR_PASSWORD: ${DATAPLANE_MONITOR_PASSWORD:?set in .env}
       COLLECT_INTERVAL_S: ${COLLECT_INTERVAL_S:-60}
+      DP_LOG_DIR: /var/log/dbpilot
+    volumes:
+      - dp-logs:/var/log/dbpilot:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -72,7 +77,7 @@ services:
 
   # One-shot: registers the development data plane as a demo organization.
   demo-seed:
-    build: ./controlplane
+    build: *controlplane_build
     profiles: ["seed"]
     command: ["python", "demo_seed.py"]
     environment:
@@ -120,8 +125,27 @@ services:
       - max_wal_size=4GB
       - -c
       - hot_standby=on
+      # Statement capture: every statement with its duration and parameters, as JSON.
+      # Six ten-minute files are reused in a cycle, so one hour is retained.
+      - -c
+      - logging_collector=on
+      - -c
+      - log_destination=jsonlog
+      - -c
+      - log_directory=/var/log/dbpilot
+      - -c
+      - log_filename=pg-%M.log
+      - -c
+      - log_rotation_age=10min
+      - -c
+      - log_truncate_on_rotation=on
+      - -c
+      - log_min_duration_statement=0
+      - -c
+      - log_file_mode=0644
     volumes:
       - dp-primary-data:/var/lib/postgresql
+      - dp-logs:/var/log/dbpilot
     healthcheck:
       # -h forces TCP: during first-time initialisation the server listens on the
       # socket only, and must not be reported healthy until the real start.
@@ -205,7 +229,7 @@ services:
 
   # Run with: docker compose run --rm dp-test
   dp-test:
-    build: ./controlplane
+    build: *controlplane_build
     profiles: ["test"]
     working_dir: /dptests
     command: ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "/dptests"]
@@ -221,4 +245,5 @@ services:
 volumes:
   control-db-data:
   dp-primary-data:
+  dp-logs:
   dp-replica-data:

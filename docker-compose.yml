@@ -206,6 +206,9 @@ services:
     volumes:
       - dp-primary-data:/var/lib/postgresql
       - dp-logs:/var/log/dbpilot
+    networks:
+      default:
+        ipv4_address: 172.28.0.10
     healthcheck:
       # -h forces TCP: during first-time initialisation the server listens on the
       # socket only, and must not be reported healthy until the real start.
@@ -232,6 +235,9 @@ services:
       REPLICATION_PASSWORD: ${DATAPLANE_REPLICATION_PASSWORD}
     volumes:
       - dp-replica-data:/var/lib/postgresql
+    networks:
+      default:
+        ipv4_address: 172.28.0.11
     depends_on:
       dp-primary:
         condition: service_healthy
@@ -287,6 +293,7 @@ services:
     build:
       context: .
       dockerfile: twin/Dockerfile
+      target: runtime
     cpuset: "12-19"
     mem_limit: ${TWIN_MEM_LIMIT:-8g}
     shm_size: 512m
@@ -349,6 +356,25 @@ services:
       - pgbouncer
       - api
 
+  # Run with: docker compose run --rm twin-test
+  # The twin agent's own tests. They build a throwaway primary inside this
+  # container and never touch the running twin or the data plane; the working
+  # tree is mounted, so they always test the code as it is on disk.
+  twin-test:
+    build:
+      context: .
+      dockerfile: twin/Dockerfile
+      target: test
+    profiles: ["test"]
+    cpuset: "16-19"
+    mem_limit: 768m
+    shm_size: 128m
+    network_mode: none
+    volumes:
+      - ./twin/agent:/srv/agent:ro
+      - ./twin/tests:/srv/tests:ro
+      - ./core/dbpilot_core:/srv/dbpilot_core:ro
+
   # Run with: docker compose run --rm dp-test
   dp-test:
     build: *controlplane_build
@@ -365,6 +391,17 @@ services:
       DP_TENANT_PASSWORD: ${DATAPLANE_TENANT_PASSWORD}
     volumes:
       - ./dataplane/tests:/dptests:ro
+
+# The two databases keep fixed addresses. A recreated container otherwise gets a
+# new one, and PgBouncer's resolver goes on answering with the old one for
+# minutes, during which that route refuses every connection. Other services take
+# addresses from the upper half of the subnet, so they can never take these.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+          ip_range: 172.28.0.128/25
 
 volumes:
   control-db-data:

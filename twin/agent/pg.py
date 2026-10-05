@@ -121,8 +121,11 @@ def freeze_base() -> tuple[datetime, str, float]:
         t0, lsn, has_unapplied_wal = conn.execute(
             "SELECT pg_last_xact_replay_timestamp(), pg_last_wal_replay_lsn()::text,"
             " pg_last_wal_receive_lsn() > pg_last_wal_replay_lsn()").fetchone()
-    if t0 is None:
-        raise RuntimeError("the twin source has not replayed any transaction yet")
+        if t0 is None:
+            # Refusing must not leave replay paused: a paused source never reaches
+            # the transaction that would give it a T0, and stops following production.
+            conn.execute("SELECT pg_wal_replay_resume()")
+            raise RuntimeError("the twin source has not replayed any transaction yet")
     stop(SOURCE)
     try:
         seconds = copy(SOURCE, BASE)
@@ -132,7 +135,11 @@ def freeze_base() -> tuple[datetime, str, float]:
     # the clone to "now"; stopping at this position keeps it at T0.
     conf = "primary_conninfo = ''\nrecovery_min_apply_delay = 0\n"
     if has_unapplied_wal:
-        conf += f"recovery_target_lsn = '{lsn}'\nrecovery_target_action = 'promote'\n"
+        # Not inclusive: a delayed standby waits at a commit record, so this position is
+        # the start of the next commit. An inclusive target would apply that commit, and
+        # the replay would then run the same transaction a second time.
+        conf += (f"recovery_target_lsn = '{lsn}'\nrecovery_target_inclusive = false\n"
+                 "recovery_target_action = 'promote'\n")
         (BASE / "promote_manually").unlink(missing_ok=True)
     else:
         # Production was idle: there is no later WAL for a recovery target to stop at,

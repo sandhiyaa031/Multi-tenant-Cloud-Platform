@@ -80,15 +80,8 @@ def test_monitor_role_reads_statistics_but_not_tenant_data():
 
 
 @needs_data_plane
-def test_collector_attributes_activity_to_the_right_tenant(client, org, other_org):
-    r = client.post(
-        "/api/v1/clusters",
-        headers=org.admin,
-        json={"name": "observed", "pooler_host": "pgbouncer", "pooler_port": 6432, "database_name": "app",
-              "primary_host": DP_HOST, "primary_port": 5432},
-    )
-    assert r.status_code == 201, r.text
-    cluster_id = r.json()["id"]
+def test_collector_attributes_activity_to_the_right_tenant(client, org, other_org, observed_cluster):
+    cluster_id = observed_cluster
     for name, role, lo, hi in [("steady", "t_steady", 1, 2), ("bursty", "t_bursty", 3, 4)]:
         body = {"cluster_id": cluster_id, "name": name, "db_role": role, "warehouse_lo": lo, "warehouse_hi": hi,
                 "profile": "STEADY_OLTP"}

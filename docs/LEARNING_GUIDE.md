@@ -185,8 +185,19 @@ profiles and history; that is where a language model helps.
   pipeline run without an API key.
 
 **What is and is not verified.** The loop is tested against a scripted model
-(tool use, error correction, refusal, turn limit). It has not yet been run
-against the live API in this project, because no API key was available.
+(tool use, error correction, refusal, output cut-off, turn limit). The path
+through the API is tested with the same scripted model: an agent proposal is
+stored as `PROPOSED` with its trace; anything the model writes about approval
+or verification is not read; a proposal outside the action space, or for a
+tenant that is not on the cluster, never reaches the queue; nobody can approve
+it before verification, and the database refuses the transition even to its
+owner. Without an API key, or when the model API fails, the endpoint answers
+with a clear error (503, 502) and stores nothing.
+
+It has not been run against the live API in this project, because no API key
+was available. So nothing is known yet about what a real model proposes, how
+many tool calls it uses, what it costs, or whether the request parameters the
+adapter sends are accepted by the live service.
 
 **Explain it.** "The model chooses among bounded actions; it never writes SQL
 that executes, and it cannot approve its own proposal. If it hallucinates, the
@@ -205,9 +216,14 @@ change before production sees it.
    standby is stopped, its data directory is copied (`cp --reflink=auto`), and
    it is restarted.
 3. **Clone.** Each arm gets a fresh copy, started with
-   `recovery_target_lsn = <that position>` and `recovery_target_action = promote`.
-   This matters: the copy contains WAL that had been received but not yet
-   applied; without a target it would roll forward to "now".
+   `recovery_target_lsn = <that position>`, `recovery_target_inclusive = false`
+   and `recovery_target_action = promote`. This matters: the copy contains WAL
+   that had been received but not yet applied; without a target it would roll
+   forward to "now". *Not inclusive* matters too. A delayed standby waits at a
+   commit record, so the frozen position is the start of the next commit; an
+   inclusive target (the default) applies that commit, and the clone ends up one
+   transaction past T0 with the replay then running that transaction again.
+   The build had this bug until a test caught it (see below).
 4. **Warm.** Every relation is loaded with `pg_prewarm`, so both arms start with
    the same warm cache. Before this, whichever arm ran first paid for cold reads
    and looked about three times slower.
@@ -218,9 +234,40 @@ change before production sees it.
 7. **Repeat** with the arm order alternating (control–treatment,
    treatment–control) so drift in the host falls on both arms alike.
 
+**How it is tested** ([twin/tests/](../twin/tests/), `docker compose run --rm twin-test`).
+The tests run inside the twin's own image, so they use the same PostgreSQL
+binaries. They build a miniature production inside the test container (a primary
+with two tenants, a per-tenant partition and the same JSON statement capture),
+and the agent base-backs it up exactly as it does the real primary. They never
+touch the running twin or the data plane, and need no workload. What they show:
+
+- the source applies production's changes late and is read-only;
+- a clone is a standalone database at exactly T0: it has what was committed
+  before T0 and nothing that was received but not yet applied;
+- what is done on a clone reaches neither production nor the source, and the
+  next arm starts from T0 again, not from the previous arm's leftovers;
+- replay runs each transaction as its tenant at its original offset, rolls back
+  what rolled back in production, counts a failed statement instead of
+  measuring it, and makes transactions over a concurrency cap wait (the wait
+  is in the latency);
+- a whole run through the real capture gives both arms the same transactions,
+  applies the action to the treatment clone only, and leaves no clone running;
+- a run that cannot proceed (no T0 yet, a failed copy, an unknown tenant, an
+  action the twin cannot evaluate) leaves the source running and following
+  production.
+
+Two bugs were found by writing these tests. The clone was one transaction past
+T0 (above). And when the source had not replayed any transaction since it
+started, the freeze refused *after* pausing replay and never resumed it, so the
+source stopped following production and every later run refused for the same
+reason until the twin was restarted. The pilot trials in the README were run
+before both fixes.
+
 **What has been observed so far (development machine, not an evaluation).**
 - Replay errors are rare: a handful of duplicate-key errors per several thousand
   transactions, from concurrent writes replaying in a slightly different order.
+  The transaction that used to be replayed twice (the bug above) may have been
+  one of them; this has not been re-measured since the fix.
 - With no change in either arm, on a quiet machine, per-tenant p95 differed by a
   few percent. When other work ran on the machine at the same time it differed by
   up to about 25%. The noise floor is therefore something the evaluation must
@@ -365,6 +412,14 @@ several containers as one system.
 on one machine: control (control-db, migrate, api, collector, engine, web), data
 (dp-primary, dp-replica, pgbouncer) and experimentation (twin). `cpuset` pins
 planes to different cores.
+
+**Fixed addresses for the databases.** Containers find each other by name
+through Docker's DNS, and a recreated container normally gets a new address.
+PgBouncer's resolver kept answering with the replica's old address for minutes
+after the replica was recreated, and every read routed to it was refused. The
+primary and replica therefore have fixed addresses on the Compose network; the
+other services draw theirs from a separate range. In Kubernetes a Service's
+address is stable already, so the manifests need nothing extra.
 
 **What one machine cannot give.** The planes still share the disk and the
 virtual machine. Production latency visibly rises while a twin run is in

@@ -1,4 +1,5 @@
 """Proposals: creating them, following them through verification, deciding on them."""
+import os
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
@@ -128,8 +129,18 @@ def _diagnose(user_id: UUID, org_id: UUID, cluster_id: UUID, body: DiagnoseIn) -
         if body.source == "rule":
             from app.proposers import rules
             return rules.propose(observer)
+        import anthropic
+
         from app.proposers import agent
-        return [agent.propose(observer, hint=body.hint)]
+        if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                                "the LLM agent is not configured (ANTHROPIC_API_KEY is not set); the rule-based proposer is available")
+        try:
+            return [agent.propose(observer, hint=body.hint)]
+        except anthropic.APIError as exc:
+            # The model could not be reached or refused the request at the transport level.
+            # Nothing was proposed, so nothing is stored.
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"the model API call failed: {type(exc).__name__}: {str(exc)[:300]}")
     finally:
         conn.close()
 

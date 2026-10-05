@@ -418,8 +418,8 @@ flowchart LR
    a known past moment for which the workload has already been captured.
 2. On a run, its replay is paused, its position recorded, and its data
    directory copied. Each copy is started with a recovery target at exactly
-   that position; without it the copy would roll forward through the WAL it had
-   received but not yet applied.
+   that position, exclusive; without it the copy would roll forward through the
+   WAL it had received but not yet applied.
 3. Every relation is loaded into memory on both clones, so both start equally
    warm. (Before this was added, whichever clone ran first looked about three
    times slower.)
@@ -692,17 +692,22 @@ Tests run inside containers against real PostgreSQL instances.
 docker compose run --rm --no-deps api python -m pytest -q                       # control plane and core
 docker compose run --rm dp-test                                                 # data plane
 docker compose run --rm --entrypoint python workload -m pytest -q tests         # workload driver
+docker compose run --rm twin-test                                               # twin node agent
 ```
 
 | Suite | Tests | Examples of what is proven |
 |---|---|---|
-| Control plane and core | 127 | A VIEWER cannot write even with raw SQL; organizations cannot see each other; the audit log cannot be altered; no path takes a proposal to production without verification; the gate rejects a change that helps its target and harms a neighbour, and the aggregate gate approves the same change; the agent's out-of-space output is bounced back, not executed |
-| Data plane | 18 | A tenant sees only its warehouses and cannot reach another tenant's partition; partitions are pruned under row-level security; an index can be built for one tenant; the replica follows and is read-only; the pooler refuses non-tenant roles |
-| Workload driver | 19 | Each transaction and query runs correctly as a tenant; New-Order keeps orders and order lines consistent; the open-loop generator hits its target rate |
+| Control plane and core | 156 | A VIEWER cannot write even with raw SQL; organizations cannot see each other; the audit log cannot be altered; no path takes a proposal to production without verification; the gate rejects a change that helps its target and harms a neighbour, and the aggregate gate approves the same change; the agent's out-of-space output is bounced back, not executed; an uncertain twin verdict buys more replays and is never applied; a failed twin run is never an approval; an agent proposal cannot be approved before verification |
+| Data plane | 36 | A tenant sees only its warehouses and cannot reach another tenant's partition; partitions are pruned under row-level security; an index can be built for one tenant; the replica follows and is read-only; the pooler refuses non-tenant roles; the executor role can apply and undo every executable action and is refused everything outside the action space |
+| Workload driver | 20 | Each transaction and query runs correctly as a tenant; New-Order keeps orders and order lines consistent; the open-loop generator hits its target rate; the report counts only what the trials contain |
+| Twin node agent | 46 | A clone is a standalone database at exactly the frozen moment; what is done on a clone reaches neither production nor the source; every arm starts from the same state; replay runs each transaction as its tenant at its original offset; a run that fails leaves the source following production |
 
-The twin, the engine's live path and the web console are exercised end to end by
-running the system (a proposal has been taken through all tiers on the
-development stack), not by automated tests.
+The twin tests build a miniature production inside their own container and
+never touch the running stack. The engine's verification path is tested with
+the twin replaced by a stand-in that returns measurements with a known effect.
+What automated tests do not cover: the canary's live path (applying to
+production, watching, rolling back), the web console, and the LLM agent against
+the live model API. The first two have been exercised by running the system.
 
 ## 19. Repository layout
 
@@ -717,7 +722,9 @@ dataplane/
   pgbouncer/         image and configuration
   seed/              four-tenant development seed
   tests/
-twin/agent/          twin node agent: clone management, replay, what-if
+twin/
+  agent/             twin node agent: clone management, replay, what-if
+  tests/             the agent's tests, on a miniature data plane
 workload/
   workload/          TPC-C transactions, analytical queries, open-loop driver
   evaluation/        scenarios, configurations and the trial harness
@@ -741,11 +748,11 @@ docker-compose.yml
 | Telemetry: query statistics, instance counters, latency percentiles | Implemented, tested |
 | Typed action space and executor | Implemented, tested |
 | Safety gate (per-tenant and aggregate) | Implemented, tested on synthetic data with known effects |
-| Digital twin: delayed standby, clones, replay, what-if | Implemented, run end to end on the development stack; no automated tests |
-| Verification engine and proposal state machine | Implemented; state machine and decision logic tested, live path run end to end |
+| Digital twin: delayed standby, clones, replay, what-if | Implemented, tested on a miniature data plane, run end to end on the development stack. Not tested at production size or under heavy load |
+| Verification engine and proposal state machine | Implemented; state machine, decision logic and the twin verification path tested, live path run end to end |
 | Canary controller and rollback | Implemented; decision logic tested, live path run in pilot trials |
 | Rule-based proposer | Implemented, tested |
-| LLM agent | Implemented, tested against a scripted model; not yet run against the live API |
+| LLM agent | Implemented; the loop and its path through the API tested against a scripted model. Not run against the live API (no key available) |
 | Web console | Implemented; every page checked in a browser against live data |
 | Scenario suite and evaluation harness | Implemented; single pilot trials only |
 | Kubernetes manifests | Written; not deployed |
@@ -753,9 +760,11 @@ docker-compose.yml
 
 ### Pilot observations (not results)
 
-Three single trials were run to check that the harness and the loop work end to
-end. Each is one run, on one machine where the planes share disk and CPU, with
-the twin's replay window shortened to 55 seconds and two repetitions. They show
+Five single trials were run to check that the harness and the loop work end to
+end. The first three predate two fixes to the twin (a clone that was one transaction past
+its frozen moment, and a refused freeze that left replay paused), found later by
+the twin's tests; the last two ran after them. Each is one run, on one machine where the planes share disk and CPU, with
+the twin's replay window shortened to 55 seconds and two repetitions (the last two: 55 seconds, one repetition per look). They show
 that the pipeline runs; they do not support any claim about how well it works.
 
 | Scenario | Configuration | Outcome | What was measured |
@@ -763,6 +772,8 @@ that the pipeline runs; they do not support any claim about how well it works.
 | Missing index for the analytical tenant | Twin, per-tenant gate | INCONCLUSIVE, not applied | Twin: target p95 0.017× of control (interval 0.014–0.020). One neighbour class, `t_mixed/OLAP`, had interval 0.63–1.06, which does not rule out a regression above 5% |
 | Instance-wide parallelism (trap) | No verification | APPLIED, later rolled back by the harness | Client-side p95 while live was 1.27×–1.59× of the minutes before, for all five tenant/class pairs |
 | Instance-wide parallelism (trap) | Twin, per-tenant gate | INCONCLUSIVE, not applied | Twin ratios 1.03×–1.12×; every interval straddles the 5% margin (for example `t_analytic/OLAP` 0.90–1.23) |
+| Index on all tenants (trap) | Twin, per-tenant gate | INCONCLUSIVE, not applied | Laptop profile, one replay per look, 3 looks. Twin: target p95 0.088× of control (interval 0.08–0.096). OLTP neighbours 0.88×–1.02×; three intervals (`t_mixed/OLAP` 0.80–1.26, `t_mixed/OLTP` 0.85–1.10, `t_steady/OLTP` 0.87–1.05) do not rule out a 5% regression |
+| Index on all tenants (trap) | No verification | APPLIED, then rolled back by the harness | Client-side p95 while live against the minutes before and after: target tenant 0.10×; OLTP tenants 0.91×–0.97×; `t_mixed/OLAP` 1.02×. No tenant was harmed |
 
 What these do and do not show:
 
@@ -777,6 +788,14 @@ What these do and do not show:
   drift on the machine; equally, the twin may under-predict. One trial cannot
   tell these apart.
 - Replay errors were 4 of 2,948 transactions and 0 of 2,928.
+- In the index trap the harm the scenario was designed to test did not appear:
+  with no verification the change was measured in production and no tenant was
+  slower. On this machine, at half rate and a 0.3-scale dataset, the extra index
+  maintenance is too small to see. The twin gate still withheld the change, for
+  want of narrow enough intervals, so in this trial it blocked a harmless change
+  and neither confirmed nor refuted its ability to catch a harmful one. A trap
+  that does bite (more write-heavy OLTP, or the full-size profile) is needed
+  for that question. Replay errors in this trial: 6 of 4,394 transactions.
 
 Known gaps against the design are listed in
 [ARCHITECTURE.md §14](docs/ARCHITECTURE.md#14-implementation-notes-where-the-build-differs-from-this-specification).

@@ -237,6 +237,9 @@ def main() -> None:
             print(f"{name:<28} {s['description']}")
         print("configurations:", ", ".join(SPEC["configurations"]))
         return
+    # A trial takes many minutes; find out now, not afterwards, that its result cannot be written.
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    open(args.out, "a", encoding="utf-8").close()
     if args.matrix:
         return matrix(args)
     outcome = asyncio.run(trial(args.scenario, args.config, args.warm, args.post, args.max))

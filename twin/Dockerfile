@@ -1,6 +1,6 @@
 # The experimentation plane: PostgreSQL binaries identical to the data plane's,
 # plus the agent that clones, replays and measures.
-FROM postgres:18
+FROM postgres:18 AS base
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends postgresql-18-hypopg python3 python3-venv util-linux \
@@ -20,4 +20,14 @@ USER postgres
 ENV PATH="/opt/agent/bin:${PATH}"
 EXPOSE 8080
 ENTRYPOINT []
+
+# The same image plus a test runner: `docker compose run --rm twin-test`.
+FROM base AS test
+USER root
+RUN /opt/agent/bin/pip install --no-cache-dir "pytest>=8,<9" "httpx>=0.27,<1"
+USER postgres
+CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+
+# Last, so that a plain `docker build` produces the agent and not the test runner.
+FROM base AS runtime
 CMD ["uvicorn", "agent.app:app", "--host", "0.0.0.0", "--port", "8080"]

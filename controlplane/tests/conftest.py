@@ -10,6 +10,7 @@ from app import mailer
 from app.main import app
 
 PASSWORD = "correct-horse-battery"
+DP_HOST = os.environ.get("DP_PRIMARY_HOST", "dp-primary")
 
 
 @pytest.fixture(scope="session")
@@ -112,3 +113,33 @@ def owner_db():
     with psycopg.connect(os.environ["CONTROL_DB_OWNER_URL"]) as conn:
         yield conn
         conn.rollback()
+
+
+def live_clusters(owner_db, org_id: str) -> int:
+    """How many of an organization's clusters the running collector would poll."""
+    return owner_db.execute(
+        "SELECT count(*) FROM cp.clusters WHERE org_id = %s AND primary_host IS NOT NULL AND status <> 'RETIRED'",
+        (org_id,)).fetchone()[0]
+
+
+@pytest.fixture
+def observed_cluster(client, org, owner_db):
+    """A cluster registered against the real data plane, retired again afterwards.
+
+    Left active, it would stay in the running collector's list: every test run would
+    add one more snapshot of the primary to every collection window.
+    """
+    r = client.post(
+        "/api/v1/clusters",
+        headers=org.admin,
+        json={"name": "observed", "pooler_host": "pgbouncer", "pooler_port": 6432, "database_name": "app",
+              "primary_host": DP_HOST, "primary_port": 5432},
+    )
+    assert r.status_code == 201, r.text
+    cluster_id = r.json()["id"]
+    try:
+        yield cluster_id
+    finally:
+        owner_db.execute("UPDATE cp.clusters SET status = 'RETIRED' WHERE id = %s", (cluster_id,))
+        owner_db.commit()
+        assert live_clusters(owner_db, org.id) == 0

@@ -2,7 +2,13 @@
 scripted model, so the tests need neither a data plane nor an API key."""
 from types import SimpleNamespace
 
+import anthropic
+import httpx
+import psycopg
+import pytest
+
 from app.proposers import agent, rules
+from app.routers import proposals as proposals_router
 
 
 class FakeObserver:
@@ -194,3 +200,152 @@ def test_agent_has_no_tool_that_writes():
     names = {t["name"] for t in agent.TOOLS}
     assert names == {"get_tenants", "get_slo_status", "get_latency", "get_top_queries", "get_tenant_load",
                      "explain_query", "get_table_profile", "get_settings", "whatif_index", "get_history", "propose_action"}
+
+
+def test_agent_that_never_produces_a_valid_action_ends_with_no_action():
+    bad = {"type": "create_index", "table": "pg_authid", "columns": ["rolpassword"]}
+    model = FakeModel(*[reply(tool("propose_action", str(i), rationale="x", action=bad)) for i in range(agent.MAX_TURNS)])
+    result = agent.propose(FakeObserver(), client=model)
+    assert result.action["type"] == "no_action" and result.action["escalate"]
+    assert all(t.get("error") for t in result.evidence["trace"])  # nothing was ever accepted
+
+
+def test_agent_cut_off_by_the_output_limit_escalates():
+    result = agent.propose(FakeObserver(), client=FakeModel(reply(text("Looking at"), stop="max_tokens")))
+    assert result.action["escalate"] and result.evidence["stop_reason"] == "max_tokens"
+
+
+def test_agent_proposal_carries_nothing_but_a_typed_action_and_a_rationale():
+    """Whatever else the model puts in its tool call, only the validated action survives."""
+    model = FakeModel(reply(tool(
+        "propose_action", "a", rationale="needed", approve=True, state="APPLIED", auto_approve=True, verification="none",
+        action={"type": "role_setting", "tenant_role": "t_analytic", "name": "work_mem", "value": "65536",
+                "state": "APPLIED", "auto_approve": True, "sql": "ALTER SYSTEM SET fsync = off"})))
+    result = agent.propose(FakeObserver(), client=model)
+    assert result.action == {"type": "role_setting", "tenant_role": "t_analytic", "name": "work_mem", "value": "65536kB"}
+    assert set(vars(result)) == {"action", "rationale", "evidence"}
+
+
+def test_agent_request_gives_the_model_the_action_space_and_only_its_tools():
+    model = FakeModel(reply(tool("propose_action", "a", rationale="x", action={"type": "no_action", "reason": "fine"})))
+    agent.propose(FakeObserver(), client=model, hint="t_steady complained about checkout latency")
+    request = model.requests[0]
+    assert request["model"] == agent.MODEL and request["tools"] == agent.TOOLS
+    assert '"create_index"' in request["system"][0]["text"] and '"instance_setting"' in request["system"][0]["text"]
+    assert "t_steady complained about checkout latency" in request["messages"][0]["content"]
+
+
+# ── The agent through the API: what is stored, and what it cannot do ─────────
+
+INDEX = {"type": "create_index", "table": "order_line", "columns": ["ol_i_id"], "tenant_role": "t_analytic"}
+
+
+class NoConnection:
+    def close(self): pass
+
+
+@pytest.fixture
+def diagnosable(client, org, monkeypatch):
+    """A registered cluster with one tenant, and a scripted observer in place of the real one.
+
+    The cluster has no primary address, so the running engine never picks up what
+    these tests propose; the observer stand-in reports one, as an observed cluster would."""
+    cluster_id = org.cluster()
+    body = {"cluster_id": cluster_id, "name": "analytic", "db_role": "t_analytic", "warehouse_lo": 5,
+            "warehouse_hi": 8, "profile": "ANALYTICAL"}
+    assert client.post("/api/v1/tenants", headers=org.admin, json=body).status_code == 201
+    observer = FakeObserver()
+    observer.cluster = {"id": cluster_id, "primary_host": "observed.example"}
+    monkeypatch.setattr(proposals_router, "open_observer", lambda *args: (NoConnection(), observer))
+    return cluster_id
+
+
+def use_model(monkeypatch, model) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+    monkeypatch.setattr(agent.anthropic, "Anthropic", lambda: model)
+
+
+def diagnose(client, org, cluster_id, **body):
+    return client.post(f"/api/v1/clusters/{cluster_id}/diagnose", headers=org.admin, json={"source": "agent", **body})
+
+
+def proposal_count(client, org, cluster_id) -> int:
+    return len(client.get(f"/api/v1/proposals?cluster_id={cluster_id}", headers=org.admin).json())
+
+
+def test_agent_proposal_is_stored_unapproved_with_its_trace(client, org, diagnosable, monkeypatch):
+    use_model(monkeypatch, FakeModel(
+        reply(tool("get_slo_status", "a")),
+        reply(tool("propose_action", "b", rationale="Item lookups scan the partition.", action=INDEX,
+                   state="APPROVED", auto_approve=True, verification="none"))))
+    r = diagnose(client, org, diagnosable)
+    assert r.status_code == 201, r.text
+    [proposal] = r.json()
+    assert proposal["source"] == "agent" and proposal["action"] == {**INDEX, "include": []}
+    # It enters the queue like any other proposal. What the model wrote about approval
+    # or verification is not read: those are the operator's request parameters.
+    assert proposal["state"] == "PROPOSED"
+    assert proposal["auto_approve"] is False and proposal["verification"] == "full"
+    assert [t["name"] for t in proposal["evidence"]["trace"]] == ["get_slo_status", "propose_action"]
+    assert proposal["evidence"]["model"] == agent.MODEL
+
+
+def test_agent_proposal_cannot_be_approved_before_verification(client, org, diagnosable, monkeypatch, owner_db):
+    use_model(monkeypatch, FakeModel(reply(tool("propose_action", "a", rationale="x", action=INDEX))))
+    pid = diagnose(client, org, diagnosable).json()[0]["id"]
+    # Not through the API, even as an admin...
+    assert client.post(f"/api/v1/proposals/{pid}/approve", headers=org.admin, json={}).status_code == 409
+    # ...and not in the database, even as its owner: the state machine is a trigger.
+    for state in ("APPROVED", "CANARY", "APPLIED"):
+        with pytest.raises(psycopg.DatabaseError) as exc:
+            owner_db.execute("UPDATE cp.proposals SET state = %s WHERE id = %s", (state, pid))
+        assert exc.value.sqlstate == "DP003"
+        owner_db.rollback()
+
+
+def test_agent_output_outside_the_action_space_never_reaches_the_queue(client, org, diagnosable, monkeypatch):
+    bad = {"type": "run_sql", "sql": "DROP TABLE ch.customer"}
+    use_model(monkeypatch, FakeModel(*[reply(tool("propose_action", str(i), rationale="x", action=bad))
+                                       for i in range(agent.MAX_TURNS)]))
+    [proposal] = diagnose(client, org, diagnosable).json()
+    assert proposal["action"]["type"] == "no_action" and proposal["action"]["escalate"]
+    assert "DROP TABLE" not in str(proposal["action"])
+
+
+def test_agent_proposal_for_a_tenant_not_on_the_cluster_is_refused(client, org, diagnosable, monkeypatch):
+    action = {**INDEX, "tenant_role": "t_somebody_else"}  # valid in form, but not this cluster's tenant
+    use_model(monkeypatch, FakeModel(reply(tool("propose_action", "a", rationale="x", action=action))))
+    assert diagnose(client, org, diagnosable).status_code == 422
+    assert proposal_count(client, org, diagnosable) == 0
+
+
+def test_diagnose_without_an_api_key_says_so_and_stores_nothing(client, org, diagnosable, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    r = diagnose(client, org, diagnosable)
+    assert r.status_code == 503 and "ANTHROPIC_API_KEY" in r.json()["detail"]
+    assert proposal_count(client, org, diagnosable) == 0
+    # The rule-based proposer does not depend on it.
+    assert client.post(f"/api/v1/clusters/{diagnosable}/diagnose", headers=org.admin,
+                       json={"source": "rule"}).status_code == 201
+
+
+def test_model_api_failure_is_reported_and_stores_nothing(client, org, diagnosable, monkeypatch):
+    class Unreachable:
+        def __init__(self):
+            self.beta = SimpleNamespace(messages=SimpleNamespace(create=self._create))
+
+        def _create(self, **kwargs):
+            raise anthropic.APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))
+
+    use_model(monkeypatch, Unreachable())
+    r = diagnose(client, org, diagnosable)
+    assert r.status_code == 502 and "APIConnectionError" in r.json()["detail"]
+    assert proposal_count(client, org, diagnosable) == 0
+
+
+def test_viewer_cannot_ask_for_a_diagnosis(client, org, diagnosable, monkeypatch, outbox):
+    use_model(monkeypatch, FakeModel())
+    viewer = org.member("VIEWER", outbox)
+    r = client.post(f"/api/v1/clusters/{diagnosable}/diagnose", headers=viewer, json={"source": "agent"})
+    assert r.status_code == 403

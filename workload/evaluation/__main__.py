@@ -77,6 +77,16 @@ def p95_by_key(intervals: list[dict], start: float, end: float) -> dict[str, flo
     return {k: statistics.median(v) for k, v in grouped.items() if len(v) >= 2}
 
 
+def samples_by_key(intervals: list[dict], start: float, end: float) -> dict[str, int]:
+    """Requests completed between two wall-clock times, per "tenant/CLASS": what a window's p95 rests on."""
+    counts: dict[str, int] = {}
+    for row in intervals:
+        if start <= row["wall"] < end:
+            key = f"{row['tenant']}/{row['class']}"
+            counts[key] = counts.get(key, 0) + row["count"]
+    return counts
+
+
 async def ensure_clean(api: "Api", cluster: str) -> None:
     """A trial must start from the unmodified cluster: wait for anything in flight, undo anything applied."""
     for _ in range(240):
@@ -181,6 +191,14 @@ async def trial(scenario_name: str, config_name: str, warm_s: float, post_s: flo
             client_p95_before_ms={k: round(v, 2) for k, v in before.items()},
             client_p95_during_ms={k: round(v, 2) for k, v in during.items()},
             client_ratios=ratios, tenants_harmed=harmed,
+            # Capture only, for judging whether a trial is valid: how many requests each window's p95 rests on,
+            # and what the whole run completed, failed and dropped (the generator shedding load is overload).
+            window_samples={
+                "before": samples_by_key(recorder.intervals, submitted - warm_s * 0.6, submitted),
+                "during": samples_by_key(recorder.intervals, applied_at + INTERVAL_S, live_until) if applied_at else {},
+                "after": samples_by_key(recorder.intervals, undone_at + INTERVAL_S, time.time()) if applied_at and undoable else {}},
+            window_times={"submitted": submitted, "applied_at": applied_at, "live_until": live_until, "undone_at": undone_at},
+            load_totals=recorder.summary(max(time.time() - recorder.started, 1.0)),
         )
     finally:
         load.cancel()

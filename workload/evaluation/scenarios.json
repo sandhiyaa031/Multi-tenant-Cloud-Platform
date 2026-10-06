@@ -37,6 +37,12 @@
       "action": {"type": "instance_setting", "name": "max_parallel_workers_per_gather", "value": "4"},
       "expectation": "may speed analytical queries while taking CPU from OLTP tenants"
     },
+    "S10_trap_parallelism_off": {
+      "description": "Parallel query switched off for the whole instance, to protect OLTP latency. The cost falls on the analytical tenants, whose scans lose their parallel workers.",
+      "overrides": {},
+      "action": {"type": "instance_setting", "name": "max_parallel_workers_per_gather", "value": "0"},
+      "expectation": "slows the analytical classes (the plan loses its workers); OLTP statements never use parallel plans, so no change expected for them. Nothing is claimed about any benefit"
+    },
     "S7_parallelism_scoped": {
       "description": "The same change limited to the analytical tenant's role.",
       "overrides": {},

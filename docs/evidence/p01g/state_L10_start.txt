@@ -1,0 +1,41 @@
+TIME 2026-10-07T06:51:46Z
+ROWS order_line_t_steady 992041
+ROWS order_line_t_bursty 772254
+ROWS order_line_t_analytic 359451
+ROWS order_line_t_mixed 744392
+ROWS orders_t_steady 99381
+ROWS orders_t_bursty 77298
+ROWS orders_t_analytic 36000
+ROWS orders_t_mixed 74691
+ROWS history_t_steady 96574
+ROWS history_t_bursty 75176
+ROWS history_t_analytic 36000
+ROWS history_t_mixed 73488
+DEAD customer_t_analytic 0 26533888
+DEAD customer_t_bursty 3265 15663104
+DEAD customer_t_mixed 751 29982720
+DEAD customer_t_steady 3094 15613952
+DEAD district 0 270336
+DEAD history_t_analytic 0 3219456
+DEAD history_t_bursty 0 7036928
+DEAD history_t_mixed 0 7069696
+DEAD history_t_steady 0 9084928
+DEAD new_order_t_analytic 0 860160
+DEAD new_order_t_bursty 2206 1515520
+DEAD new_order_t_mixed 959 1810432
+DEAD new_order_t_steady 862 1859584
+DEAD order_line_t_analytic 0 45744128
+DEAD order_line_t_bursty 17535 114442240
+DEAD order_line_t_mixed 6937 100958208
+DEAD order_line_t_steady 10666 141991936
+DEAD orders_t_analytic 0 4915200
+DEAD orders_t_bursty 280 10977280
+DEAD orders_t_mixed 462 11272192
+DEAD orders_t_steady 261 13967360
+DEAD stock_t_analytic 0 45490176
+DEAD stock_t_bursty 5470 25305088
+DEAD stock_t_mixed 13384 49438720
+DEAD stock_t_steady 8945 25722880
+DEAD warehouse 0 114688
+SETTING per_gather 2
+DB size 727381695

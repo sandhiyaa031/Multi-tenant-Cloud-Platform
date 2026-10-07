@@ -1,0 +1,12 @@
+ Container dbpilot-dp-primary-1 Running 
+ Container dbpilot-pgbouncer-1 Running 
+ Container dbpilot-dp-primary-1 Waiting 
+ Container dbpilot-dp-primary-1 Healthy 
+ Container dbpilot-workload-run-5abd2c4b8312 Creating 
+ Container dbpilot-workload-run-5abd2c4b8312 Created 
+tenant       class    done   per_s   err  drop       p50       p95       p99
+t_analytic   OLAP      996   11.07     0     0    128.51    548.89    763.19
+t_bursty     OLTP     6985   77.61     0  2193     54.02   1589.95   1759.82
+t_mixed      OLAP      513     5.7     0     0    249.85    948.41   1251.18
+t_mixed      OLTP     6246    69.4     0     0      22.2    116.67    212.33
+t_steady     OLTP    12582   139.8     0     0     31.47    463.72     731.5

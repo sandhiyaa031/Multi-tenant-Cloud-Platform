@@ -1,0 +1,7 @@
+2026-10-07T15:15:02Z START plan idle=120 soak=2100 rest=600 reburn=300
+2026-10-07T15:15:08Z PHASE idle begins
+2026-10-07T15:17:09Z PHASE soak begins (5 burners on vCPUs 9,10,11,20,21)
+2026-10-07T15:52:09Z PHASE rest begins (burners removed)
+2026-10-07T16:02:10Z PHASE reburn begins
+2026-10-07T16:07:10Z PHASE reburn ends (burners removed)
+2026-10-07T16:07:31Z END

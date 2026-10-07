@@ -1,0 +1,98 @@
+ Container dbpilot-pgbouncer-1 Running 
+ Container dbpilot-api-1 Running 
+ Container dbpilot-dp-primary-1 Running 
+ Container dbpilot-control-db-1 Running 
+ Container dbpilot-dp-primary-1 Waiting 
+ Container dbpilot-control-db-1 Waiting 
+ Container dbpilot-control-db-1 Healthy 
+ Container dbpilot-migrate-1 Starting 
+ Container dbpilot-dp-primary-1 Healthy 
+ Container dbpilot-migrate-1 Started 
+ Container dbpilot-migrate-1 Waiting 
+ Container dbpilot-migrate-1 Exited 
+ Container dbpilot-evaluation-run-374823623fbb Creating 
+ Container dbpilot-evaluation-run-374823623fbb Created 
+AA                           r0 A OLTP p95   27.0  OLAP p95  122.4  gather=False
+AA                           r0 B OLTP p95   25.6  OLAP p95  125.7  gather=False
+AA                           r1 B OLTP p95   28.2  OLAP p95  126.5  gather=False
+AA                           r1 A OLTP p95   27.8  OLAP p95  123.6  gather=False
+AA                           r2 A OLTP p95   26.6  OLAP p95  128.8  gather=False
+AA                           r2 B OLTP p95   26.7  OLAP p95  123.7  gather=False
+AA                           r3 B OLTP p95   28.5  OLAP p95  125.8  gather=False
+AA                           r3 A OLTP p95   26.9  OLAP p95  126.5  gather=False
+AA                           r4 A OLTP p95   28.3  OLAP p95  123.8  gather=False
+AA                           r4 B OLTP p95   27.6  OLAP p95  123.3  gather=False
+AA                           r5 B OLTP p95   26.2  OLAP p95  122.5  gather=False
+AA                           r5 A OLTP p95   26.0  OLAP p95  122.3  gather=False
+S6_index_order_line_all      r0 A OLTP p95   26.9  OLAP p95  122.1  gather=False
+S6_index_order_line_all      r0 B OLTP p95   29.6  OLAP p95  123.2  gather=False
+S6_index_order_line_all      r1 B OLTP p95   26.3  OLAP p95  124.1  gather=False
+S6_index_order_line_all      r1 A OLTP p95   24.7  OLAP p95  124.4  gather=False
+S6_index_order_line_all      r2 A OLTP p95   26.8  OLAP p95  122.3  gather=False
+S6_index_order_line_all      r2 B OLTP p95   25.7  OLAP p95  122.7  gather=False
+S6_index_order_line_all      r3 B OLTP p95   27.9  OLAP p95  121.7  gather=False
+S6_index_order_line_all      r3 A OLTP p95   25.7  OLAP p95  122.3  gather=False
+S6_index_order_line_all      r4 A OLTP p95   25.6  OLAP p95  122.3  gather=False
+S6_index_order_line_all      r4 B OLTP p95   29.4  OLAP p95  124.4  gather=False
+S6_index_order_line_all      r5 B OLTP p95   25.8  OLAP p95  121.9  gather=False
+S6_index_order_line_all      r5 A OLTP p95   25.9  OLAP p95  124.1  gather=False
+S10_parallel_off             r0 A OLTP p95   26.2  OLAP p95  123.2  gather=False
+S10_parallel_off             r0 B OLTP p95   25.6  OLAP p95  122.4  gather=False
+S10_parallel_off             r1 B OLTP p95   26.5  OLAP p95  122.7  gather=False
+S10_parallel_off             r1 A OLTP p95   25.0  OLAP p95  123.4  gather=False
+S10_parallel_off             r2 A OLTP p95   25.4  OLAP p95  122.6  gather=False
+S10_parallel_off             r2 B OLTP p95   26.2  OLAP p95  123.5  gather=False
+S10_parallel_off             r3 B OLTP p95   25.5  OLAP p95  122.6  gather=False
+S10_parallel_off             r3 A OLTP p95   24.5  OLAP p95  124.0  gather=False
+S10_parallel_off             r4 A OLTP p95   25.9  OLAP p95  123.8  gather=False
+S10_parallel_off             r4 B OLTP p95   25.3  OLAP p95  123.1  gather=False
+S10_parallel_off             r5 B OLTP p95   25.6  OLAP p95  122.5  gather=False
+S10_parallel_off             r5 A OLTP p95   25.1  OLAP p95  123.0  gather=False
+S10p_parallel_off_rls_safe   r0 A OLTP p95   26.0  OLAP p95  123.2  gather=True
+S10p_parallel_off_rls_safe   r0 B OLTP p95   25.2  OLAP p95  122.2  gather=False
+S10p_parallel_off_rls_safe   r1 B OLTP p95   25.8  OLAP p95  123.3  gather=False
+S10p_parallel_off_rls_safe   r1 A OLTP p95   26.2  OLAP p95  122.0  gather=True
+S10p_parallel_off_rls_safe   r2 A OLTP p95   26.2  OLAP p95  122.4  gather=True
+S10p_parallel_off_rls_safe   r2 B OLTP p95   25.2  OLAP p95  122.9  gather=False
+S10p_parallel_off_rls_safe   r3 B OLTP p95   28.3  OLAP p95  122.8  gather=False
+S10p_parallel_off_rls_safe   r3 A OLTP p95   25.2  OLAP p95  122.1  gather=True
+S10p_parallel_off_rls_safe   r4 A OLTP p95   24.9  OLAP p95  121.3  gather=True
+S10p_parallel_off_rls_safe   r4 B OLTP p95   25.6  OLAP p95  121.9  gather=False
+S10p_parallel_off_rls_safe   r5 B OLTP p95   26.0  OLAP p95  122.0  gather=False
+S10p_parallel_off_rls_safe   r5 A OLTP p95   25.7  OLAP p95  121.7  gather=True
+work_mem_1MB                 r0 A OLTP p95   25.7  OLAP p95  122.0  gather=False
+work_mem_1MB                 r0 B OLTP p95   25.6  OLAP p95  122.6  gather=False
+work_mem_1MB                 r1 B OLTP p95   25.7  OLAP p95  122.1  gather=False
+work_mem_1MB                 r1 A OLTP p95   23.2  OLAP p95  123.1  gather=False
+work_mem_1MB                 r2 A OLTP p95   26.4  OLAP p95  121.7  gather=False
+work_mem_1MB                 r2 B OLTP p95   26.5  OLAP p95  122.9  gather=False
+work_mem_1MB                 r3 B OLTP p95   25.0  OLAP p95  122.9  gather=False
+work_mem_1MB                 r3 A OLTP p95   25.8  OLAP p95  122.5  gather=False
+work_mem_1MB                 r4 A OLTP p95   26.8  OLAP p95  121.8  gather=False
+work_mem_1MB                 r4 B OLTP p95   26.0  OLAP p95  122.1  gather=False
+work_mem_1MB                 r5 B OLTP p95   26.1  OLAP p95  121.9  gather=False
+work_mem_1MB                 r5 A OLTP p95   26.4  OLAP p95  121.7  gather=False
+random_page_cost_1           r0 A OLTP p95   26.5  OLAP p95  123.1  gather=False
+random_page_cost_1           r0 B OLTP p95   23.5  OLAP p95  123.7  gather=False
+random_page_cost_1           r1 B OLTP p95   25.0  OLAP p95  122.6  gather=False
+random_page_cost_1           r1 A OLTP p95   27.0  OLAP p95  122.7  gather=False
+random_page_cost_1           r2 A OLTP p95   25.6  OLAP p95  123.3  gather=False
+random_page_cost_1           r2 B OLTP p95   25.8  OLAP p95  124.4  gather=False
+random_page_cost_1           r3 B OLTP p95   26.6  OLAP p95  123.0  gather=False
+random_page_cost_1           r3 A OLTP p95   26.0  OLAP p95  121.8  gather=False
+random_page_cost_1           r4 A OLTP p95   25.4  OLAP p95  124.1  gather=False
+random_page_cost_1           r4 B OLTP p95   25.7  OLAP p95  123.6  gather=False
+random_page_cost_1           r5 B OLTP p95   26.7  OLAP p95  122.3  gather=False
+random_page_cost_1           r5 A OLTP p95   25.0  OLAP p95  123.8  gather=False
+index_stock_s_quantity_all   r0 A OLTP p95   25.4  OLAP p95  123.5  gather=False
+index_stock_s_quantity_all   r0 B OLTP p95   25.7  OLAP p95  122.3  gather=False
+index_stock_s_quantity_all   r1 B OLTP p95   26.7  OLAP p95  124.1  gather=False
+index_stock_s_quantity_all   r1 A OLTP p95   26.5  OLAP p95  123.4  gather=False
+index_stock_s_quantity_all   r2 A OLTP p95   26.3  OLAP p95  123.6  gather=False
+index_stock_s_quantity_all   r2 B OLTP p95   26.2  OLAP p95  122.3  gather=False
+index_stock_s_quantity_all   r3 B OLTP p95   26.1  OLAP p95  122.9  gather=False
+index_stock_s_quantity_all   r3 A OLTP p95   25.7  OLAP p95  122.5  gather=False
+index_stock_s_quantity_all   r4 A OLTP p95   22.9  OLAP p95  122.0  gather=False
+index_stock_s_quantity_all   r4 B OLTP p95   26.9  OLAP p95  123.7  gather=False
+index_stock_s_quantity_all   r5 B OLTP p95   25.3  OLAP p95  121.7  gather=False
+index_stock_s_quantity_all   r5 A OLTP p95   26.7  OLAP p95  123.4  gather=False

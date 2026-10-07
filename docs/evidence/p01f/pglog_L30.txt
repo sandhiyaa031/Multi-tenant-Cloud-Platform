@@ -1,0 +1,5 @@
+2026-10-07 06:28:34.899 UTC checkpoint starting: time
+2026-10-07 06:33:04.119 UTC checkpoint complete: wrote 10599 buffers (16.2%), wrote 3 SLRU buffers; 0 WAL file(s) added, 8 removed, 5 recycled; write=269.169 s, sync=0.026 s, total=269.220 s; sync files=82, longest=0.002 s, average=0.001 s; distanc
+2026-10-07 06:33:34.147 UTC checkpoint starting: time
+2026-10-07 06:38:04.090 UTC checkpoint complete: wrote 11656 buffers (17.8%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 8 recycled; write=269.888 s, sync=0.028 s, total=269.944 s; sync files=80, longest=0.002 s, average=0.001 s; distanc
+2026-10-07 06:38:34.117 UTC checkpoint starting: time

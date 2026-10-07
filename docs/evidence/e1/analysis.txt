@@ -1,0 +1,164 @@
+E1 A/A ANALYSIS  dir=D:\college\PROJECTS-SEM 5\dbpilot\Multi-tenant-Cloud-Platform\results\e1
+runs found 30, valid 28, invalid 2
+  INVALID run 28: power source changed: Online|99|ded574b5-45a0-4f42-8737-46345c09c238 -> Offline|97|ded574b5-45a0-4f42-8737-46345c09c238
+  INVALID run 29: power source changed: Offline|97|ded574b5-45a0-4f42-8737-46345c09c238 -> Online|96|ded574b5-45a0-4f42-8737-46345c09c238
+
+== runs ==
+run first  secs  txns  window errors  wal_T/C   n per key (control)
+  1 C      126  1484   55.0     2   1.000   ana/OLA=38 bur/OLT=510 mix/OLA=32 mix/OLT=305 ste/OLT=598
+  2 T      126  1509   55.0     2   1.000   ana/OLA=40 bur/OLT=557 mix/OLA=61 mix/OLT=304 ste/OLT=546
+  3 C      126  1393   55.0     2   1.000   ana/OLA=42 bur/OLT=527 mix/OLA=32 mix/OLT=272 ste/OLT=519
+  4 T      126  1365   55.0     4   1.000   ana/OLA=39 bur/OLT=429 mix/OLA=48 mix/OLT=304 ste/OLT=543
+  5 C      125  1285   55.0     2   1.000   ana/OLA=39 bur/OLT=423 mix/OLA=37 mix/OLT=275 ste/OLT=510
+  6 T      126  1367   55.0     0   1.000   ana/OLA=48 bur/OLT=449 mix/OLA=53 mix/OLT=289 ste/OLT=528
+  7 C      126  1419   55.0    12   1.000   ana/OLA=40 bur/OLT=501 mix/OLA=38 mix/OLT=300 ste/OLT=534
+  8 T      126  1475   55.0     0   1.000   ana/OLA=44 bur/OLT=493 mix/OLA=44 mix/OLT=327 ste/OLT=567
+  9 C      126  1493   55.0     0   1.000   ana/OLA=44 bur/OLT=520 mix/OLA=57 mix/OLT=331 ste/OLT=541
+ 10 T      125  1441   55.0     0   1.000   ana/OLA=33 bur/OLT=509 mix/OLA=30 mix/OLT=295 ste/OLT=574
+ 11 C      126  1417   55.0     2   1.000   ana/OLA=46 bur/OLT=483 mix/OLA=46 mix/OLT=296 ste/OLT=545
+ 12 T      126  1445   55.0     2   1.000   ana/OLA=42 bur/OLT=521 mix/OLA=31 mix/OLT=294 ste/OLT=556
+ 13 C      126  1468   55.0     0   1.000   ana/OLA=49 bur/OLT=541 mix/OLA=48 mix/OLT=299 ste/OLT=531
+ 14 T      131  1382   55.0     2   1.000   ana/OLA=49 bur/OLT=422 mix/OLA=42 mix/OLT=317 ste/OLT=551
+ 15 C      125  1329   55.0     0   1.000   ana/OLA=38 bur/OLT=453 mix/OLA=37 mix/OLT=273 ste/OLT=528
+ 16 T      126  1409   55.0     2   1.000   ana/OLA=41 bur/OLT=534 mix/OLA=41 mix/OLT=284 ste/OLT=508
+ 17 C      126  1397   55.0     0   1.000   ana/OLA=30 bur/OLT=507 mix/OLA=39 mix/OLT=301 ste/OLT=520
+ 18 T      126  1399   55.0     0   1.000   ana/OLA=48 bur/OLT=480 mix/OLA=33 mix/OLT=297 ste/OLT=541
+ 19 C      120  1375   55.0     2   1.000   ana/OLA=43 bur/OLT=464 mix/OLA=29 mix/OLT=309 ste/OLT=529
+ 20 T      126  1385   55.0     0   1.000   ana/OLA=29 bur/OLT=504 mix/OLA=43 mix/OLT=297 ste/OLT=512
+ 21 C      126  1432   55.0     2   1.000   ana/OLA=46 bur/OLT=520 mix/OLA=58 mix/OLT=298 ste/OLT=509
+ 22 T      126  1384   55.0     0   1.001   ana/OLA=45 bur/OLT=484 mix/OLA=40 mix/OLT=290 ste/OLT=525
+ 23 C      126  1456   55.0     0   1.000   ana/OLA=48 bur/OLT=538 mix/OLA=66 mix/OLT=294 ste/OLT=510
+ 24 T      126  1289   55.0     6   1.000   ana/OLA=35 bur/OLT=380 mix/OLA=32 mix/OLT=290 ste/OLT=549
+ 25 C      131  1284   55.0     0   1.000   ana/OLA=28 bur/OLT=414 mix/OLA=31 mix/OLT=296 ste/OLT=515
+ 26 T      126  1432   55.0     0   1.003   ana/OLA=40 bur/OLT=539 mix/OLA=42 mix/OLT=250 ste/OLT=561
+ 27 C      126  1407   55.0     0   1.000   ana/OLA=34 bur/OLT=499 mix/OLA=34 mix/OLT=275 ste/OLT=565
+ 30 T      126  1374   55.0     2   1.000   ana/OLA=42 bur/OLT=421 mix/OLA=49 mix/OLT=308 ste/OLT=553
+
+== A1 single look (one 55 s replay per arm), engine-equivalent policy ==
+   run 22: REJECT ['harm shown: t_bursty/OLTP: p99 1402.9 ms breaks the 150 ms SLO that control met', 'harm shown: t_mixed/OLTP: p95 2.77x (interval 1.17-55.99)', 'harm shown: t_steady/OLTP: p99 909.1 ms breaks the 100 ms SLO that control met']
+   run 25: REJECT ['harm shown: t_bursty/OLTP: p95 1.26x (interval 1.14-1.98)']
+ target=t_analytic: UNDECIDED (INCONCLUSIVE) 26, FALSE HARM (REJECT) 2
+    t_analytic/OLAP    UNCERTAIN 24, SAFE 4
+    t_bursty/OLTP      UNCERTAIN 24, SAFE 2, HARMED 2
+    t_mixed/OLAP       UNCERTAIN 23, SAFE 5
+    t_mixed/OLTP       UNCERTAIN 23, SAFE 4, HARMED 1
+    t_steady/OLTP      UNCERTAIN 25, SAFE 2, HARMED 1
+ target=None: UNDECIDED (INCONCLUSIVE) 26, FALSE HARM (REJECT) 2
+    t_analytic/OLAP    UNCERTAIN 24, SAFE 4
+    t_bursty/OLTP      UNCERTAIN 24, SAFE 2, HARMED 2
+    t_mixed/OLAP       UNCERTAIN 23, SAFE 5
+    t_mixed/OLTP       UNCERTAIN 23, SAFE 4, HARMED 1
+    t_steady/OLTP      UNCERTAIN 25, SAFE 2, HARMED 1
+ aggregate gate: REJECT 21, INCONCLUSIVE 7
+ per-run p95 ratio (treatment/control) and interval at engine alpha, target=t_analytic:
+   run 01 ana/OLA 0.96 [0.91,1.12]  bur/OLT 1.09 [0.86,1.17]  mix/OLA   n/a [  n/a,  n/a]  mix/OLT 1.11 [0.84,1.72]  ste/OLT 1.02 [0.94,1.22]
+   run 02 ana/OLA 1.01 [0.86,1.08]  bur/OLT 1.00 [0.59,1.10]  mix/OLA 0.92 [0.69,1.07]  mix/OLT 0.99 [0.74,1.22]  ste/OLT 1.03 [0.84,1.19]
+   run 03 ana/OLA 1.03 [0.89,1.09]  bur/OLT 1.09 [0.82,1.23]  mix/OLA   n/a [  n/a,  n/a]  mix/OLT 0.99 [0.83,1.14]  ste/OLT 1.06 [0.90,1.13]
+   run 04 ana/OLA 0.97 [0.83,1.07]  bur/OLT 0.94 [0.66,1.23]  mix/OLA 1.01 [0.91,1.18]  mix/OLT 0.87 [0.68,1.60]  ste/OLT 0.90 [0.78,0.99]
+   run 05 ana/OLA 1.02 [0.93,1.13]  bur/OLT 1.00 [0.89,1.10]  mix/OLA 0.98 [0.90,1.01]  mix/OLT 1.09 [0.80,1.46]  ste/OLT 0.95 [0.85,1.10]
+   run 06 ana/OLA 0.96 [0.73,1.03]  bur/OLT 0.97 [0.83,1.22]  mix/OLA 0.98 [0.90,1.03]  mix/OLT 0.98 [0.83,1.45]  ste/OLT 0.94 [0.86,1.05]
+   run 07 ana/OLA   n/a [  n/a,  n/a]  bur/OLT 1.16 [1.01,1.30]  mix/OLA   n/a [  n/a,  n/a]  mix/OLT 1.23 [1.03,2.26]  ste/OLT 1.09 [0.99,1.17]
+   run 08 ana/OLA 0.99 [0.81,1.14]  bur/OLT 0.98 [0.86,1.07]  mix/OLA 1.04 [0.91,1.15]  mix/OLT 1.02 [0.88,1.21]  ste/OLT 1.02 [0.81,1.09]
+   run 09 ana/OLA 1.03 [0.89,1.17]  bur/OLT 1.05 [0.85,1.12]  mix/OLA 1.03 [0.98,1.18]  mix/OLT 1.10 [0.86,1.19]  ste/OLT 0.96 [0.85,1.08]
+   run 10 ana/OLA   n/a [  n/a,  n/a]  bur/OLT 1.00 [0.83,1.15]  mix/OLA 1.04 [0.93,1.07]  mix/OLT 0.98 [0.83,1.24]  ste/OLT 0.99 [0.88,1.19]
+   run 11 ana/OLA 0.93 [0.60,1.03]  bur/OLT 1.04 [0.88,1.21]  mix/OLA 0.96 [0.93,0.99]  mix/OLT 0.96 [0.80,1.11]  ste/OLT 0.93 [0.62,1.06]
+   run 12 ana/OLA 1.02 [0.82,1.18]  bur/OLT 0.94 [0.81,1.10]  mix/OLA   n/a [  n/a,  n/a]  mix/OLT 0.92 [0.73,1.28]  ste/OLT 0.97 [0.85,1.10]
+   run 13 ana/OLA 1.01 [0.95,1.08]  bur/OLT 1.03 [0.89,1.18]  mix/OLA 1.06 [0.95,1.16]  mix/OLT 0.94 [0.82,1.19]  ste/OLT 1.04 [0.91,1.22]
+   run 14 ana/OLA 1.06 [0.98,1.06]  bur/OLT 0.73 [0.04,1.18]  mix/OLA 0.97 [0.96,1.04]  mix/OLT 0.83 [0.10,1.05]  ste/OLT 0.95 [0.79,1.07]
+   run 15 ana/OLA   n/a [  n/a,  n/a]  bur/OLT 0.89 [0.80,1.04]  mix/OLA 1.03 [0.97,1.05]  mix/OLT 0.88 [0.72,1.04]  ste/OLT 0.92 [0.77,1.08]
+   run 16 ana/OLA 0.95 [0.91,1.03]  bur/OLT 0.94 [0.73,1.07]  mix/OLA 0.94 [0.91,1.10]  mix/OLT 0.81 [0.63,0.92]  ste/OLT 1.01 [0.85,1.09]
+   run 17 ana/OLA   n/a [  n/a,  n/a]  bur/OLT 0.96 [0.61,1.08]  mix/OLA 1.07 [0.98,1.18]  mix/OLT 1.02 [0.88,1.38]  ste/OLT 0.93 [0.78,1.09]
+   run 18 ana/OLA 1.04 [0.93,1.16]  bur/OLT 0.93 [0.79,1.24]  mix/OLA   n/a [  n/a,  n/a]  mix/OLT 0.91 [0.73,1.04]  ste/OLT 0.91 [0.73,1.25]
+   run 19 ana/OLA 1.06 [0.96,1.13]  bur/OLT 0.95 [0.83,1.09]  mix/OLA   n/a [  n/a,  n/a]  mix/OLT 0.97 [0.88,1.28]  ste/OLT 0.93 [0.83,1.05]
+   run 20 ana/OLA   n/a [  n/a,  n/a]  bur/OLT 1.03 [0.87,1.20]  mix/OLA 1.03 [0.94,1.10]  mix/OLT 1.05 [0.72,2.34]  ste/OLT 1.08 [0.86,1.37]
+   run 21 ana/OLA 1.01 [0.91,1.05]  bur/OLT 1.12 [0.84,1.33]  mix/OLA 1.04 [0.92,1.10]  mix/OLT 1.02 [0.81,1.22]  ste/OLT 1.05 [0.93,1.18]
+   run 22 ana/OLA 3.14 [1.01,16.45]  bur/OLT 55.09 [1.02,79.15]  mix/OLA   n/a [  n/a,  n/a]  mix/OLT 2.77 [1.17,55.99]  ste/OLT 9.08 [0.98,44.80]
+   run 23 ana/OLA 0.99 [0.93,1.08]  bur/OLT 1.07 [0.56,1.23]  mix/OLA 1.05 [0.92,1.13]  mix/OLT 1.35 [0.93,1.73]  ste/OLT 0.80 [0.53,1.24]
+   run 24 ana/OLA   n/a [  n/a,  n/a]  bur/OLT 0.91 [0.47,1.27]  mix/OLA   n/a [  n/a,  n/a]  mix/OLT 0.83 [0.42,1.37]  ste/OLT 0.82 [0.71,1.07]
+   run 25 ana/OLA   n/a [  n/a,  n/a]  bur/OLT 1.26 [1.14,1.98]  mix/OLA   n/a [  n/a,  n/a]  mix/OLT 1.05 [0.65,1.20]  ste/OLT 1.14 [0.91,1.38]
+   run 26 ana/OLA 0.99 [0.88,1.40]  bur/OLT 0.90 [0.78,1.08]  mix/OLA 0.92 [0.92,1.07]  mix/OLT 1.08 [0.86,1.25]  ste/OLT 0.88 [0.80,1.09]
+   run 27 ana/OLA   n/a [  n/a,  n/a]  bur/OLT 0.90 [0.80,1.35]  mix/OLA 0.99 [0.84,1.12]  mix/OLT 0.84 [0.71,1.63]  ste/OLT 0.92 [0.78,1.18]
+   run 30 ana/OLA 0.98 [0.81,1.40]  bur/OLT 0.74 [0.52,0.98]  mix/OLA 0.99 [0.89,1.28]  mix/OLT 1.03 [0.76,1.59]  ste/OLT 0.91 [0.54,1.85]
+
+== A2 engine-equivalent verdicts (triplets, looks added until decisive, max 3) ==
+ target=t_analytic
+   runs 01-03: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.01x, interval 0.90-1.10 does not rule out a regression above 5%; t_bursty/OLTP: p95 1.04x, interval 0.92-1.14 does not rule out a regression above 5%; t_mixed/OLAP: p95 0.98x, interval 0.89-1.10 does not rul
+   runs 04-06: INCONCLUSIVE after 3 look(s): t_bursty/OLTP: p95 0.99x, interval 0.89-1.07 does not rule out a regression above 5%; t_mixed/OLTP: p95 0.96x, interval 0.89-1.21 does not rule out a regression above 5%
+   runs 07-09: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.01x, interval 0.94-1.09 does not rule out a regression above 5%; t_bursty/OLTP: p95 1.06x, interval 0.98-1.13 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.03x, interval 0.96-1.13 does not rul
+   runs 10-12: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 0.99x, interval 0.87-1.09 does not rule out a regression above 5%; t_bursty/OLTP: p95 1.00x, interval 0.91-1.11 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.00x, interval 0.93-1.11 does not rul
+   runs 13-15: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.01x, interval 0.97-1.06 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.02x, interval 0.97-1.12 does not rule out a regression above 5%; t_steady/OLTP: p95 0.97x, interval 0.88-1.05 does not rul
+   runs 16-18: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.00x, interval 0.93-1.17 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.02x, interval 0.93-1.12 does not rule out a regression above 5%
+   runs 19-21: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.04x, interval 0.98-1.13 does not rule out a regression above 5%; t_bursty/OLTP: p95 1.01x, interval 0.92-1.13 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.01x, interval 0.94-1.08 does not rul
+   runs 22-24: REJECT after 1 look(s): harm shown: t_bursty/OLTP: p99 1402.9 ms breaks the 150 ms SLO that control met; harm shown: t_mixed/OLTP: p95 2.77x (interval 1.17-55.99); harm shown: t_steady/OLTP: p99 909.1 ms breaks the 100 ms SLO that control met
+   runs 25-27: REJECT after 1 look(s): harm shown: t_bursty/OLTP: p95 1.26x (interval 1.14-1.98)
+   SUMMARY: UNDECIDED (INCONCLUSIVE) 7, FALSE HARM (REJECT) 2
+   aggregate gate on the same triplets (3 looks pooled): REJECT 8, INCONCLUSIVE 1
+ target=None
+   runs 01-03: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.01x, interval 0.90-1.10 does not rule out a regression above 5%; t_bursty/OLTP: p95 1.04x, interval 0.92-1.14 does not rule out a regression above 5%; t_mixed/OLAP: p95 0.98x, interval 0.89-1.10 does not rul
+   runs 04-06: INCONCLUSIVE after 3 look(s): t_bursty/OLTP: p95 0.99x, interval 0.89-1.07 does not rule out a regression above 5%; t_mixed/OLTP: p95 0.96x, interval 0.89-1.21 does not rule out a regression above 5%
+   runs 07-09: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.01x, interval 0.94-1.09 does not rule out a regression above 5%; t_bursty/OLTP: p95 1.06x, interval 0.98-1.13 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.03x, interval 0.96-1.13 does not rul
+   runs 10-12: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 0.99x, interval 0.87-1.09 does not rule out a regression above 5%; t_bursty/OLTP: p95 1.00x, interval 0.91-1.11 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.00x, interval 0.93-1.11 does not rul
+   runs 13-15: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.01x, interval 0.97-1.06 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.02x, interval 0.97-1.12 does not rule out a regression above 5%; t_steady/OLTP: p95 0.97x, interval 0.88-1.05 does not rul
+   runs 16-18: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.00x, interval 0.93-1.17 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.02x, interval 0.93-1.12 does not rule out a regression above 5%
+   runs 19-21: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.04x, interval 0.98-1.13 does not rule out a regression above 5%; t_bursty/OLTP: p95 1.01x, interval 0.92-1.13 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.01x, interval 0.94-1.08 does not rul
+   runs 22-24: REJECT after 1 look(s): harm shown: t_bursty/OLTP: p99 1402.9 ms breaks the 150 ms SLO that control met; harm shown: t_mixed/OLTP: p95 2.77x (interval 1.17-55.99); harm shown: t_steady/OLTP: p99 909.1 ms breaks the 100 ms SLO that control met
+   runs 25-27: REJECT after 1 look(s): harm shown: t_bursty/OLTP: p95 1.26x (interval 1.14-1.98)
+   SUMMARY: UNDECIDED (INCONCLUSIVE) 7, FALSE HARM (REJECT) 2
+   aggregate gate on the same triplets (3 looks pooled): REJECT 8, INCONCLUSIVE 1
+
+== A3 interval width (hi - lo) against budget; alpha per key 0.00333; SAFE needs hi <= 1.05 ==
+ cumulative (first k valid runs pooled):
+    k    t_analytic/OLAP      t_bursty/OLTP       t_mixed/OLAP       t_mixed/OLTP      t_steady/OLTP   all SAFE
+    1   0.21 [0.91,1.12]   0.31 [0.86,1.17]    n/a [  n/a,  n/a]   0.88 [0.84,1.72]   0.28 [0.94,1.22]   False
+    2   0.22 [0.90,1.12]   0.28 [0.86,1.14]   0.16 [0.84,1.00]   0.43 [0.85,1.27]   0.20 [0.95,1.15]   False
+    3   0.19 [0.90,1.10]   0.21 [0.92,1.14]   0.22 [0.89,1.10]   0.27 [0.90,1.17]   0.14 [0.98,1.11]   False
+    6   0.12 [0.93,1.05]   0.16 [0.94,1.10]   0.10 [0.93,1.03]   0.17 [0.92,1.09]   0.10 [0.93,1.04]   False
+   12   0.09 [0.95,1.04]   0.10 [0.98,1.08]   0.09 [0.96,1.05]   0.11 [0.95,1.06]   0.08 [0.96,1.04]   False
+   24   0.14 [0.97,1.11]   0.14 [0.97,1.12]   0.09 [0.98,1.07]   0.15 [0.95,1.11]   0.15 [0.96,1.10]   False
+   28   0.18 [0.97,1.15]   0.13 [0.97,1.09]   0.08 [0.99,1.06]   0.14 [0.95,1.10]   0.14 [0.95,1.09]   False
+ disjoint groups (median width, [min-max], share of groups in which the key is SAFE):
+   size  1 (28 groups)  ana/OLA 0.22 [0.08-15.43] safe 4/28; bur/OLT 0.37 [0.21-78.13] safe 2/28; mix/OLA 0.19 [0.07-0.39] safe 5/28; mix/OLT 0.52 [0.29-54.82] safe 4/28; ste/OLT 0.30 [0.18-43.82] safe 2/28;  ALL SAFE 0/28
+   size  3 ( 9 groups)  ana/OLA 0.19 [0.09-2.62] safe 1/9; bur/OLT 0.21 [0.16-66.55] safe 2/9; mix/OLA 0.18 [0.11-0.43] safe 1/9; mix/OLT 0.28 [0.20-2.29] safe 2/9; ste/OLT 0.17 [0.12-13.73] safe 2/9;  ALL SAFE 0/9
+   size  6 ( 4 groups)  ana/OLA 0.12 [0.12-1.73] safe 0/4; bur/OLT 0.15 [0.14-31.14] safe 1/4; mix/OLA 0.13 [0.10-0.29] safe 1/4; mix/OLT 0.18 [0.17-1.19] safe 1/4; ste/OLT 0.12 [0.10-1.43] safe 2/4;  ALL SAFE 0/4
+   size 10 ( 2 groups)  ana/OLA 0.10 [0.09-0.10] safe 1/2; bur/OLT 0.11 [0.11-0.11] safe 1/2; mix/OLA 0.11 [0.10-0.13] safe 0/2; mix/OLT 0.14 [0.14-0.14] safe 1/2; ste/OLT 0.09 [0.08-0.10] safe 2/2;  ALL SAFE 0/2
+   size 15 ( 1 groups)  ana/OLA 0.08 [0.08-0.08] safe 1/1; bur/OLT 0.10 [0.10-0.10] safe 0/1; mix/OLA 0.09 [0.09-0.09] safe 0/1; mix/OLT 0.10 [0.10-0.10] safe 1/1; ste/OLT 0.07 [0.07-0.07] safe 1/1;  ALL SAFE 0/1
+   size 28 ( 1 groups)  ana/OLA 0.18 [0.18-0.18] safe 0/1; bur/OLT 0.13 [0.13-0.13] safe 0/1; mix/OLA 0.08 [0.08-0.08] safe 0/1; mix/OLT 0.14 [0.14-0.14] safe 0/1; ste/OLT 0.14 [0.14-0.14] safe 0/1;  ALL SAFE 0/1
+ duration (each run truncated to its first d seconds after warm-up), median width over groups:
+   k=1 d=  20  ana/OLA   n/a (0/28); bur/OLT 0.49 (28/28); mix/OLA   n/a (0/28); mix/OLT 0.59 (28/28); ste/OLT 0.40 (28/28);
+   k=1 d=  35  ana/OLA 0.19 (12/28); bur/OLT 0.43 (28/28); mix/OLA 0.21 (8/28); mix/OLT 0.62 (28/28); ste/OLT 0.30 (28/28);
+   k=1 d=full  ana/OLA 0.22 (20/28); bur/OLT 0.37 (28/28); mix/OLA 0.19 (19/28); mix/OLT 0.52 (28/28); ste/OLT 0.30 (28/28);
+   k=3 d=  20  ana/OLA 0.32 (9/9); bur/OLT 0.34 (9/9); mix/OLA 0.20 (9/9); mix/OLT 0.43 (9/9); ste/OLT 0.29 (9/9);
+   k=3 d=  35  ana/OLA 0.29 (9/9); bur/OLT 0.25 (9/9); mix/OLA 0.19 (9/9); mix/OLT 0.35 (9/9); ste/OLT 0.19 (9/9);
+   k=3 d=full  ana/OLA 0.19 (9/9); bur/OLT 0.21 (9/9); mix/OLA 0.18 (9/9); mix/OLT 0.28 (9/9); ste/OLT 0.17 (9/9);
+
+== A4 between-arm variation ==
+ t_analytic/OLAP    level=run n=20  sd ln(p95 ratio) 0.258  median boot SE 0.052  calibration 4.94  cover95 90%  cover(engine alpha) 95%  ratio range 0.93-3.14  sd ln(median ratio) 0.067  | order ln(second/first) mean -0.054 t -0.93
+ t_bursty/OLTP      level=run n=28  sd ln(p95 ratio) 0.770  median boot SE 0.057  calibration 13.53  cover95 86%  cover(engine alpha) 86%  ratio range 0.73-55.09  sd ln(median ratio) 0.144  | order ln(second/first) mean -0.086 t -0.59
+ t_mixed/OLAP       level=run n=19  sd ln(p95 ratio) 0.046  median boot SE 0.037  calibration 1.23  cover95 79%  cover(engine alpha) 95%  ratio range 0.92-1.07  sd ln(median ratio) 0.292  | order ln(second/first) mean +0.020 t +2.07
+ t_mixed/OLTP       level=run n=28  sd ln(p95 ratio) 0.228  median boot SE 0.080  calibration 2.84  cover95 82%  cover(engine alpha) 89%  ratio range 0.81-2.77  sd ln(median ratio) 0.139  | order ln(second/first) mean +0.007 t +0.16
+ t_steady/OLTP      level=run n=28  sd ln(p95 ratio) 0.432  median boot SE 0.046  calibration 9.40  cover95 79%  cover(engine alpha) 96%  ratio range 0.80-9.08  sd ln(median ratio) 0.142  | order ln(second/first) mean -0.068 t -0.85
+ (a) overall 95% coverage 83% (102/123); at engine alpha 92%
+ (c) correlation across runs between keys, ln(p95 ratio) [run-level keys only]:
+    t_analytic/OLAP    +1.00 -0.14 +0.22 +0.08 +0.24
+    t_bursty/OLTP      -0.14 +1.00 +0.38 +0.41 +0.17
+    t_mixed/OLAP       +0.22 +0.38 +1.00 +0.35 -0.01
+    t_mixed/OLTP       +0.08 +0.41 +0.35 +1.00 -0.53
+    t_steady/OLTP      +0.24 +0.17 -0.01 -0.53 +1.00
+    mean off-diagonal correlation +0.12
+ (e) paired shift: per run, median ln(latency in arm run second / first) over requests paired by tenant, class and offset:
+    per run (all keys): +0.201 -0.183 -0.035 +0.188 -0.016 +0.044 +0.051 -0.005 +0.000 -0.012 -0.009 +0.128 +0.073 -0.075 -0.047 +0.089 +0.007 +0.033 -0.203 -0.028 +0.199 -0.123 +0.002 +0.189 +0.228 +0.079 -0.053 +0.051
+    all keys: mean +0.028  sd 0.110  range -0.203..+0.228  (as ratios 0.817..1.256)
+    t_analytic/OLAP    mean +0.003 sd 0.045 range -0.183..+0.090
+    t_bursty/OLTP      mean +0.039 sd 0.125 range -0.241..+0.268
+    t_mixed/OLAP       mean -0.006 sd 0.054 range -0.214..+0.093
+    t_mixed/OLTP       mean +0.017 sd 0.114 range -0.192..+0.218
+    t_steady/OLTP      mean +0.027 sd 0.128 range -0.227..+0.249
+    correlation of per-key paired shifts across runs, mean off-diagonal +0.50
+ FROZEN READING of the between-arm problem: VISIBLE  (calibration>1.5 in 4/5 keys; 95% coverage 83%; max |order t| 2.07)
+
+== A5 replay budget (fit width = a * k^-b on median widths of disjoint groups; extrapolation) ==
+ t_analytic/OLAP    widths k1:0.22 k3:0.19 k6:0.12 k10:0.10 k15:0.08 k28:0.18   exponent -0.19   replays for width 0.10: 36  (~152 min of twin time at ~2.1 min per arm)
+ t_bursty/OLTP      widths k1:0.37 k3:0.21 k6:0.15 k10:0.11 k15:0.10 k28:0.13   exponent -0.37   replays for width 0.10: 23  (~97 min of twin time at ~2.1 min per arm)
+ t_mixed/OLAP       widths k1:0.19 k3:0.18 k6:0.13 k10:0.11 k15:0.09 k28:0.08   exponent -0.29   replays for width 0.10: 13  (~53 min of twin time at ~2.1 min per arm)
+ t_mixed/OLTP       widths k1:0.52 k3:0.28 k6:0.18 k10:0.14 k15:0.10 k28:0.14   exponent -0.46   replays for width 0.10: 28  (~117 min of twin time at ~2.1 min per arm)
+ t_steady/OLTP      widths k1:0.30 k3:0.17 k6:0.12 k10:0.09 k15:0.07 k28:0.14   exponent -0.32   replays for width 0.10: 16  (~66 min of twin time at ~2.1 min per arm)

@@ -1,0 +1,4 @@
+[2026-10-07T16:39:16Z] START n_runs=2 warm_s=90.0 window_s=55.0 power=Offline|100|ded574b5-45a0-4f42-8737-46345c09c238
+[2026-10-07T16:43:03Z] run 01 DONE 136.0s txns=1470 window=55.0 errors=0 power=Offline|100|ded574b5-45a0-4f42-8737-46345c09c238 -> Offline|93|ded574b5-45a0-4f42-8737-46345c09c238 
+[2026-10-07T16:45:17Z] run 02 DONE 132.6s txns=1415 window=55.0 errors=2 power=Offline|93|ded574b5-45a0-4f42-8737-46345c09c238 -> Offline|91|ded574b5-45a0-4f42-8737-46345c09c238 
+[2026-10-07T16:45:17Z] END

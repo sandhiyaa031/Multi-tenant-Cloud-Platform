@@ -1,0 +1,19 @@
+ Container dbpilot-dp-primary-1 Running 
+ Container dbpilot-api-1 Running 
+ Container dbpilot-control-db-1 Running 
+ Container dbpilot-pgbouncer-1 Running 
+ Container dbpilot-dp-primary-1 Waiting 
+ Container dbpilot-control-db-1 Waiting 
+ Container dbpilot-dp-primary-1 Healthy 
+ Container dbpilot-control-db-1 Healthy 
+ Container dbpilot-migrate-1 Starting 
+ Container dbpilot-migrate-1 Started 
+ Container dbpilot-migrate-1 Waiting 
+ Container dbpilot-migrate-1 Exited 
+ Container dbpilot-evaluation-run-8d6733c1f9a0 Creating 
+ Container dbpilot-evaluation-run-8d6733c1f9a0 Created 
+Traceback (most recent call last):
+  File "/results/p01e/run.py", line 14, in <module>
+    from workload.driver import Recorder, run
+ModuleNotFoundError: No module named 'workload'
+

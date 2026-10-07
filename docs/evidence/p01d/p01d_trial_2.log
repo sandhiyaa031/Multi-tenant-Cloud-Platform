@@ -1,0 +1,45 @@
+ Container dbpilot-pgbouncer-1 Running 
+ Container dbpilot-dp-primary-1 Running 
+ Container dbpilot-api-1 Running 
+ Container dbpilot-control-db-1 Running 
+ Container dbpilot-dp-primary-1 Waiting 
+ Container dbpilot-control-db-1 Waiting 
+ Container dbpilot-control-db-1 Healthy 
+ Container dbpilot-migrate-1 Starting 
+ Container dbpilot-dp-primary-1 Healthy 
+ Container dbpilot-migrate-1 Started 
+ Container dbpilot-migrate-1 Waiting 
+ Container dbpilot-migrate-1 Exited 
+ Container dbpilot-evaluation-run-f14dac3ba25d Creating 
+ Container dbpilot-evaluation-run-f14dac3ba25d Created 
+discarding closed connection: <psycopg.AsyncConnection [BAD] at 0x7cd588da4350>
+error ignored in rollback on <psycopg.AsyncConnection [INTRANS] (host=pgbouncer port=6432 user=t_mixed database=app) at 0x7cd588da43b0>: Explicit rollback() forbidden within a Transaction context. (Either raise Rollback() or allow an exception to propagate out of the context.)
+error ignored in rollback on <psycopg.AsyncConnection [INTRANS] (host=pgbouncer port=6432 user=t_mixed database=app) at 0x7cd5872a9b50>: Explicit rollback() forbidden within a Transaction context. (Either raise Rollback() or allow an exception to propagate out of the context.)
+error ignored in rollback on <psycopg.AsyncConnection [INTRANS] (host=pgbouncer port=6432 user=t_mixed database=app) at 0x7cd5891dfb00>: Explicit rollback() forbidden within a Transaction context. (Either raise Rollback() or allow an exception to propagate out of the context.)
+error ignored in rollback on <psycopg.AsyncConnection [INTRANS] (host=pgbouncer port=6432 user=t_mixed database=app) at 0x7cd588928dd0>: Explicit rollback() forbidden within a Transaction context. (Either raise Rollback() or allow an exception to propagate out of the context.)
+error ignored in rollback on <psycopg.AsyncConnection [INTRANS] (host=pgbouncer port=6432 user=t_mixed database=app) at 0x7cd58959f500>: Explicit rollback() forbidden within a Transaction context. (Either raise Rollback() or allow an exception to propagate out of the context.)
+error ignored in rollback on <psycopg.AsyncConnection [INTRANS] (host=pgbouncer port=6432 user=t_mixed database=app) at 0x7cd5891df410>: Explicit rollback() forbidden within a Transaction context. (Either raise Rollback() or allow an exception to propagate out of the context.)
+error ignored in rollback on <psycopg.AsyncConnection [INTRANS] (host=pgbouncer port=6432 user=t_mixed database=app) at 0x7cd5891dfad0>: Explicit rollback() forbidden within a Transaction context. (Either raise Rollback() or allow an exception to propagate out of the context.)
+error ignored in rollback on <psycopg.AsyncConnection [INTRANS] (host=pgbouncer port=6432 user=t_mixed database=app) at 0x7cd588d352e0>: Explicit rollback() forbidden within a Transaction context. (Either raise Rollback() or allow an exception to propagate out of the context.)
+error ignored in rollback on <psycopg.AsyncConnection [INTRANS] (host=pgbouncer port=6432 user=t_mixed database=app) at 0x7cd588928c20>: Explicit rollback() forbidden within a Transaction context. (Either raise Rollback() or allow an exception to propagate out of the context.)
+error ignored in rollback on <psycopg.AsyncConnection [INTRANS] (host=pgbouncer port=6432 user=t_mixed database=app) at 0x7cd588da74a0>: Explicit rollback() forbidden within a Transaction context. (Either raise Rollback() or allow an exception to propagate out of the context.)
+{
+  "scenario": "S7_trap_parallelism",
+  "config": "C2_no_verification",
+  "final_state": "APPLIED",
+  "seconds_to_decision": 70.6,
+  "twin_decision": null,
+  "canary_outcome": "HELD",
+  "client_ratios": {
+    "t_bursty/OLTP": 1.006,
+    "t_steady/OLTP": 1.022,
+    "t_mixed/OLTP": 0.985,
+    "t_analytic/OLAP": 1.354,
+    "t_mixed/OLAP": 1.091
+  },
+  "tenants_harmed": [
+    "t_analytic/OLAP"
+  ],
+  "twin_ratios": null,
+  "cleanup": "ROLLED_BACK"
+}

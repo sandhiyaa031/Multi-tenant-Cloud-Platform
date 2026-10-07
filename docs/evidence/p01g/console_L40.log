@@ -1,0 +1,15 @@
+ Container dbpilot-control-db-1 Running 
+ Container dbpilot-api-1 Running 
+ Container dbpilot-dp-primary-1 Running 
+ Container dbpilot-pgbouncer-1 Running 
+ Container dbpilot-control-db-1 Waiting 
+ Container dbpilot-dp-primary-1 Waiting 
+ Container dbpilot-control-db-1 Healthy 
+ Container dbpilot-migrate-1 Starting 
+ Container dbpilot-dp-primary-1 Healthy 
+ Container dbpilot-migrate-1 Started 
+ Container dbpilot-migrate-1 Waiting 
+ Container dbpilot-migrate-1 Exited 
+ Container dbpilot-evaluation-run-d4640f2c5a28 Creating 
+ Container dbpilot-evaluation-run-d4640f2c5a28 Created 
+[{"tenant": "t_analytic", "class": "OLAP", "completed": 16575, "per_s": 39.46, "errors": 0, "dropped": 158, "p50_ms": 195.03, "p95_ms": 2584.17, "p99_ms": 7186.15}, {"tenant": "t_bursty", "class": "OLTP", "completed": 3664, "per_s": 8.72, "errors": 0, "dropped": 0, "p50_ms": 26.68, "p95_ms": 145.18, "p99_ms": 199.64}, {"tenant": "t_mixed", "class": "OLAP", "completed": 165, "per_s": 0.39, "errors": 0, "dropped": 0, "p50_ms": 577.47, "p95_ms": 2312.82, "p99_ms": 3258.72}, {"tenant": "t_mixed", "class": "OLTP", "completed": 2077, "per_s": 4.95, "errors": 0, "dropped": 0, "p50_ms": 25.96, "p95_ms": 164.63, "p99_ms": 317.67}, {"tenant": "t_steady", "class": "OLTP", "completed": 4382, "per_s": 10.43, "errors": 0, "dropped": 0, "p50_ms": 25.35, "p95_ms": 169.14, "p99_ms": 285.75}]

@@ -1,0 +1,14 @@
+[2026-10-06T17:34:50Z] relaunch after tool fault (addendum 1)
+[2026-10-06T17:34:59Z] run L10 start
+[2026-10-06T17:42:05Z] run L10 exit=0
+[2026-10-06T17:42:18Z] run L10 state captured; resting 90 s
+[2026-10-06T17:43:56Z] run L20 start
+[2026-10-06T17:51:00Z] run L20 exit=0
+[2026-10-06T17:51:10Z] run L20 state captured; resting 90 s
+[2026-10-06T17:52:48Z] run L30 start
+[2026-10-06T17:59:52Z] run L30 exit=0
+[2026-10-06T18:00:01Z] run L30 state captured; resting 90 s
+[2026-10-06T18:01:39Z] run L40 start
+[2026-10-06T18:08:43Z] run L40 exit=0
+[2026-10-06T18:08:53Z] run L40 state captured; resting 90 s
+[2026-10-06T18:10:23Z] ALL DONE

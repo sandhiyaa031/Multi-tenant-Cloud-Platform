@@ -1,0 +1,32 @@
+ Container dbpilot-api-1 Running 
+ Container dbpilot-control-db-1 Running 
+ Container dbpilot-dp-primary-1 Running 
+ Container dbpilot-pgbouncer-1 Running 
+ Container dbpilot-control-db-1 Waiting 
+ Container dbpilot-dp-primary-1 Waiting 
+ Container dbpilot-control-db-1 Healthy 
+ Container dbpilot-dp-primary-1 Healthy 
+ Container dbpilot-migrate-1 Starting 
+ Container dbpilot-migrate-1 Started 
+ Container dbpilot-migrate-1 Waiting 
+ Container dbpilot-migrate-1 Exited 
+ Container dbpilot-evaluation-run-da5020c5bf53 Creating 
+ Container dbpilot-evaluation-run-da5020c5bf53 Created 
+{
+  "scenario": "S7_trap_parallelism",
+  "config": "C2_no_verification",
+  "final_state": "APPLIED",
+  "seconds_to_decision": 70.1,
+  "twin_decision": null,
+  "canary_outcome": "HELD",
+  "client_ratios": {
+    "t_mixed/OLAP": 0.864,
+    "t_mixed/OLTP": 0.887,
+    "t_bursty/OLTP": 0.792,
+    "t_steady/OLTP": 0.942,
+    "t_analytic/OLAP": 0.809
+  },
+  "tenants_harmed": [],
+  "twin_ratios": null,
+  "cleanup": "ROLLED_BACK"
+}

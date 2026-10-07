@@ -1,0 +1,11 @@
+[18:47:25] trial 1 S7_trap_parallelism start
+[18:53:32] trial 1 S7_trap_parallelism exit=0
+[18:54:21] trial 2 S10_trap_parallelism_off start
+[19:00:32] trial 2 S10_trap_parallelism_off exit=0
+[19:01:18] trial 3 S10_trap_parallelism_off start
+[19:07:09] trial 3 S10_trap_parallelism_off exit=0
+[19:08:02] trial 4 S7_trap_parallelism start
+[19:14:13] trial 4 S7_trap_parallelism exit=0
+[19:14:59] trial 5 S10_trap_parallelism_off start
+[19:21:10] trial 5 S10_trap_parallelism_off exit=0
+[19:21:56] ALL DONE

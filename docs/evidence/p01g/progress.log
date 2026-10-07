@@ -1,0 +1,14 @@
+[2026-10-07T06:51:46Z] P0.1g launched (protocol hash fb03acbc0be68757)
+[2026-10-07T06:51:53Z] run L10 start
+[2026-10-07T06:58:56Z] run L10 exit=0
+[2026-10-07T06:59:08Z] run L10 state and database events captured; resting 90 s
+[2026-10-07T07:00:45Z] run L20 start
+[2026-10-07T07:07:48Z] run L20 exit=0
+[2026-10-07T07:08:03Z] run L20 state and database events captured; resting 90 s
+[2026-10-07T07:09:41Z] run L30 start
+[2026-10-07T07:16:51Z] run L30 exit=0
+[2026-10-07T07:17:05Z] run L30 state and database events captured; resting 90 s
+[2026-10-07T07:18:42Z] run L40 start
+[2026-10-07T07:25:47Z] run L40 exit=0
+[2026-10-07T07:26:00Z] run L40 state and database events captured; resting 90 s
+[2026-10-07T07:27:30Z] ALL DONE

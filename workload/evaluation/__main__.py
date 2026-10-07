@@ -108,7 +108,13 @@ async def trial(scenario_name: str, config_name: str, warm_s: float, post_s: flo
     await ensure_clean(api, cluster)
 
     host, password = os.environ.get("DP_POOLER_HOST", "pgbouncer"), os.environ["DP_TENANT_PASSWORD"]
-    recorder = Recorder(out_path=None, interval_s=INTERVAL_S)
+    # Optional per-operation capture (secondary instrumentation, never an input to a decision).
+    ops_dir = os.environ.get("EVAL_OPS_DIR")
+    ops_file = None
+    if ops_dir:
+        os.makedirs(ops_dir, exist_ok=True)
+        ops_file = f"{ops_dir}/{scenario_name}_{int(time.time())}_ops.jsonl"
+    recorder = Recorder(out_path=ops_file, interval_s=INTERVAL_S)
     load = asyncio.create_task(run(
         profile_for(scenario), lambda role: f"host={host} port=6432 dbname=app user={role} password={password}",
         max_s, None, interval_s=INTERVAL_S, pool_size=POOL_SIZE, recorder=recorder))
@@ -197,6 +203,7 @@ async def trial(scenario_name: str, config_name: str, warm_s: float, post_s: flo
                 "before": samples_by_key(recorder.intervals, submitted - warm_s * 0.6, submitted),
                 "during": samples_by_key(recorder.intervals, applied_at + INTERVAL_S, live_until) if applied_at else {},
                 "after": samples_by_key(recorder.intervals, undone_at + INTERVAL_S, time.time()) if applied_at and undoable else {}},
+            ops_file=ops_file, recorder_started=recorder.started,
             window_times={"submitted": submitted, "applied_at": applied_at, "live_until": live_until, "undone_at": undone_at},
             load_totals=recorder.summary(max(time.time() - recorder.started, 1.0)),
         )

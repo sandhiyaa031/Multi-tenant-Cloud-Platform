@@ -263,17 +263,18 @@ class Engine:
             self.step(db, proposal, "T1", "SKIPPED", "planner what-if applies to indexes only", {}, 0)
 
         # T2
-        # An interval that straddles a threshold buys another replay of a fresh window,
-        # judged together with the earlier ones, until the verdict is firm or the budget
-        # is spent. Looking several times is paid for in judge(): each look is tested at
-        # a stricter level, so the chance of a false "safe" over all looks stays at 5%.
+        # Each look is one replay pair (control and treatment) of a fresh window. One pair
+        # decides nothing: the gate needs several to see how much two arms differ by
+        # themselves. Pairs are added and judged together until the verdict is firm or the
+        # budget is spent. Looking several times is paid for in judge(): each look is tested
+        # at a stricter level, so the chance of a false "safe" over all looks stays at 5%.
         started = time.monotonic()
         pooled = {"control": {}, "treatment": {}, "wal_control": 0, "wal_treatment": 0, "errors": 0,
-                  "transactions": 0, "repetitions": 0, "window_s": 0.0}
+                  "transactions": 0, "repetitions": 0, "window_s": 0.0, "treatment_first": {}}
         verdict, detail, note = None, {}, ""
         for look in range(1, self.c.twin_max_looks + 1):
             try:
-                # With one repetition per replay, the arm that runs first alternates between replays.
+                # The arm that runs first alternates between looks: harm must be seen in both orders.
                 run = self.twin_run(proposal["action"], treatment_first=look % 2 == 0)
             except Exception as exc:
                 if verdict is None:
@@ -293,6 +294,7 @@ class Engine:
             pooled["transactions"] += run["transactions"]
             pooled["repetitions"] += run["repetitions"]
             pooled["window_s"] = run["window_s"]
+            pooled["treatment_first"][look] = look % 2 == 0
             pooled["treatment_arm"] = treatment
             verdict, detail = self.judge(db, proposal, cluster, action, pooled)
             detail["looks"] = look
@@ -353,7 +355,7 @@ class Engine:
             " JOIN cp.tenants t ON t.id = s.tenant_id WHERE t.cluster_id = %s", (cluster["id"],))}
         base = gate.GatePolicy()
         tolerance, history = self.calibration(db, cluster, action.type, base.contract_tolerance)
-        policy = gate.GatePolicy(confidence=1 - (1 - base.confidence) / self.c.twin_max_looks, n_boot=4000,
+        policy = gate.GatePolicy(confidence=1 - (1 - base.confidence) / self.c.twin_max_looks,
                                  contract_tolerance=tolerance)
         treatment = pooled["treatment_arm"]
 
@@ -362,7 +364,8 @@ class Engine:
                 pooled["control"], pooled["treatment"], actions.target_tenant(action), policy,
                 mode=mode, cheap_to_undo=treatment.get("cheap_to_undo", True),
                 wal_ratio=pooled["wal_treatment"] / pooled["wal_control"] if pooled["wal_control"] else None,
-                storage_delta_bytes=treatment.get("storage_delta_bytes", 0), slo_ms=slos)
+                storage_delta_bytes=treatment.get("storage_delta_bytes", 0), slo_ms=slos,
+                treatment_first=pooled["treatment_first"])
 
         verdict = decide(proposal["gate_mode"])
         other = decide("aggregate" if proposal["gate_mode"] == "per_tenant" else "per_tenant")

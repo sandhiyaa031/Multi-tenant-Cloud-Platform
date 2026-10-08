@@ -1,0 +1,69 @@
+D:\college\PROJECTS-SEM 5\dbpilot\Multi-tenant-Cloud-Platform\core\dbpilot_core\gate.py:197: RuntimeWarning: overflow encountered in exp
+  effect.lo, effect.hi = float(np.exp(logs.mean() - half)), float(np.exp(logs.mean() + half))
+E1 RE-JUDGEMENT  valid runs 28  keys 5
+
+== 1. engine-equivalent verdicts on consecutive groups (looks added until decisive) ==
+ max looks  3 (9 groups) target=t_analytic  old: FALSE HARM 2, UNDECIDED 7  new: UNDECIDED 9
+ max looks  3 (9 groups) target=None        old: FALSE HARM 2, UNDECIDED 7  new: UNDECIDED 9
+      aggregate gate (new), same groups: INCONCLUSIVE 9
+ max looks  5 (5 groups) target=t_analytic  old: FALSE HARM 1, UNDECIDED 4  new: UNDECIDED 5
+ max looks  5 (5 groups) target=None        old: FALSE HARM 1, UNDECIDED 4  new: UNDECIDED 5
+      aggregate gate (new), same groups: INCONCLUSIVE 4, REJECT 1
+ max looks  9 (3 groups) target=t_analytic  old: FALSE HARM 1, UNDECIDED 2  new: UNDECIDED 3
+ max looks  9 (3 groups) target=None        old: FALSE HARM 1, UNDECIDED 2  new: UNDECIDED 3
+      aggregate gate (new), same groups: INCONCLUSIVE 2, REJECT 1
+ max looks 14 (2 groups) target=t_analytic  old: (not run, slow)                          new: UNDECIDED 2
+ max looks 14 (2 groups) target=None        old: (not run, slow)                          new: UNDECIDED 2
+      aggregate gate (new), same groups: INCONCLUSIVE 1, REJECT 1
+ max looks 28 (1 groups) target=t_analytic  old: (not run, slow)                          new: UNDECIDED 1
+ max looks 28 (1 groups) target=None        old: (not run, slow)                          new: UNDECIDED 1
+      aggregate gate (new), same groups: REJECT 1
+ detail, new gate, max looks 3, target=t_analytic:
+   runs 01-03: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.00x, interval 0.69-1.45 does not rule out a regression above 5%; t_bursty/OLTP: p95 1.06x, interval 0.66-1.70 does not rule out a regression above 5%; t_mixed/OLAP: p95 0.95x, i
+   runs 04-06: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 0.98x, interval 0.73-1.32 does not rule out a regression above 5%; t_bursty/OLTP: p95 0.97x, interval 0.73-1.29 does not rule out a regression above 5%; t_mixed/OLAP: p95 0.99x, i
+   runs 07-09: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.03x, interval 0.71-1.48 does not rule out a regression above 5%; t_bursty/OLTP: p95 1.06x, interval 0.45-2.51 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.03x, i
+   runs 10-12: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 0.98x, interval 0.62-1.57 does not rule out a regression above 5%; t_bursty/OLTP: p95 0.99x, interval 0.61-1.61 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.00x, i
+   runs 13-15: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.02x, interval 0.70-1.48 does not rule out a regression above 5%; t_bursty/OLTP: p95 0.88x, interval 0.16-4.73 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.02x, i
+   runs 16-18: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.01x, interval 0.59-1.74 does not rule out a regression above 5%; t_bursty/OLTP: p95 0.95x, interval 0.80-1.12 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.01x, i
+   runs 19-21: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.05x, interval 0.77-1.43 does not rule out a regression above 5%; t_bursty/OLTP: p95 1.03x, interval 0.43-2.44 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.00x, i
+   runs 22-24: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 1.39x, interval 0.00-1585.51 does not rule out a regression above 5%; t_bursty/OLTP: p95 3.78x, interval 0.00-43420560427.61 does not rule out a regression above 5%; t_mixed/OLAP:
+   runs 25-27: INCONCLUSIVE after 3 look(s): t_analytic/OLAP: p95 0.94x, interval 0.37-2.37 does not rule out a regression above 5%; t_bursty/OLTP: p95 1.00x, interval 0.14-7.04 does not rule out a regression above 5%; t_mixed/OLAP: p95 1.00x, i
+
+== 2. the disturbed runs (old gate: false 'harm shown') under the new gate ==
+   runs from 22, 1 pair(s): INCONCLUSIVE; largest ratio t_bursty/OLTP 55.09 interval None-None status UNCERTAIN
+   runs from 22, 2 pair(s): INCONCLUSIVE; largest ratio t_bursty/OLTP 7.68 interval 2.8275518254511056e-163-2.0853092379346091e+164 status UNCERTAIN
+   runs from 22, 3 pair(s): INCONCLUSIVE; largest ratio t_bursty/OLTP 3.78 interval 3.2848182936530785e-10-43420560427.606445 status UNCERTAIN
+   runs from 25, 1 pair(s): INCONCLUSIVE; largest ratio t_bursty/OLTP 1.26 interval None-None status UNCERTAIN
+   runs from 25, 2 pair(s): INCONCLUSIVE; largest ratio t_mixed/OLTP 1.06 interval 0.12532473114690598-9.01691845547915 status UNCERTAIN
+   runs from 25, 3 pair(s): INCONCLUSIVE; largest ratio t_bursty/OLTP 1.00 interval 0.14333094458290346-7.037738436232696 status UNCERTAIN
+
+== 3. new gate: interval width (hi - lo) by number of pairs, alpha as the engine would use with that many looks ==
+   pairs groups  ana/OLA: median [min-max] safe  bur/OLT: median [min-max] safe  mix/OLA: median [min-max] safe  mix/OLT: median [min-max] safe  ste/OLT: median [min-max] safe   ALL SAFE
+       2     14  33.80 [0.21-29833888089908455847630701854720.00] 0/14   5761.99 [4.94-3125324661157875693721030880421431227526857044806829304108054342296886133756980273758838893566979076106747904.00] 0/14   6.87 [0.03-79992992.95] 1/14   1788.01 [4.17-8115013416788812031907069952.00] 0/14   53.47 [0.57-1781194442579854378842440848800591449463526215467949864517632.00] 0/14   0/14
+       3      9  0.78 [0.60-1585.51] 0/9   2.01 [0.31-43420560427.61] 0/9   1.19 [0.19-5.43] 0/9   2.45 [0.63-610.83] 0/9   1.32 [0.42-2032828.64] 0/9   0/9
+       5      5  0.30 [0.20-6.47] 0/5   0.49 [0.24-674.29] 0/5   0.36 [0.17-0.89] 0/5   0.63 [0.35-5.43] 0/5   0.42 [0.31-39.70] 0/5   0/5
+       9      3  0.14 [0.12-1.57] 0/3   0.32 [0.23-14.19] 0/3   0.17 [0.15-0.41] 0/3   0.34 [0.23-1.45] 1/3   0.21 [0.15-3.95] 1/3   0/3
+      14      2  0.45 [0.09-0.82] 1/2   2.26 [0.25-4.27] 0/2   0.17 [0.11-0.24] 0/2   0.51 [0.24-0.78] 0/2   0.94 [0.13-1.74] 0/2   0/2
+      28      1  0.36 [0.36-0.36] 0/1   1.42 [1.42-1.42] 0/1   0.12 [0.12-0.12] 0/1   0.36 [0.36-0.36] 0/1   0.71 [0.71-0.71] 0/1   0/1
+ per-pair ln(p95 ratio) across the 28 runs: sd, and sd without the stalled run 22:
+   t_analytic/OLAP    pairs 28  sd 0.224  without run 22: 0.056   pooled 28: ratio 1.036 interval 0.871-1.231
+   t_bursty/OLTP      pairs 28  sd 0.770  without run 22: 0.116   pooled 28: ratio 1.132 interval 0.625-2.050
+   t_mixed/OLAP       pairs 28  sd 0.077  without run 22: 0.050   pooled 28: ratio 1.014 interval 0.955-1.076
+   t_mixed/OLTP       pairs 28  sd 0.228  without run 22: 0.119   pooled 28: ratio 1.023 interval 0.858-1.220
+   t_steady/OLTP      pairs 28  sd 0.432  without run 22: 0.084   pooled 28: ratio 1.046 interval 0.750-1.459
+
+== 4. random orderings of the valid runs (dependent draws from the same 28 runs; indicative only) ==
+   max looks 3: 1800 sequences: UNDECIDED 1800 (100.0%)
+   max looks 5: 1000 sequences: UNDECIDED 1000 (100.0%)
+   max looks 9: 600 sequences: UNDECIDED 600 (100.0%)
+
+== 5. sensitivity: OLAP samples under 10 ms dropped (stands in for the capture filter) ==
+   max looks  3: UNDECIDED 9   median widths: ana/OLA 0.81  bur/OLT 2.01  mix/OLA 0.97  mix/OLT 2.45  ste/OLT 1.32
+   max looks  9: UNDECIDED 3   median widths: ana/OLA 0.15  bur/OLT 0.32  mix/OLA 0.25  mix/OLT 0.34  ste/OLT 0.21
+   max looks 28: UNDECIDED 1   median widths: ana/OLA 0.36  bur/OLT 1.42  mix/OLA 0.15  mix/OLT 0.36  ste/OLT 0.71
+   median samples per replay after warm-up (all, without no-ops): t_analytic/OLAP 36 -> 34, t_mixed/OLAP 32 -> 17
+
+== 6. A/A coverage of a nominal 95% interval from k pairs: Student's t against a percentile bootstrap over pairs ==
+   k=3: interval contains 'no effect' in 95.0% (t) and 74.5% (bootstrap over pairs) of 2000 subsets
+   k=5: interval contains 'no effect' in 95.9% (t) and 83.7% (bootstrap over pairs) of 2000 subsets
+   k=9: interval contains 'no effect' in 96.8% (t) and 90.9% (bootstrap over pairs) of 2000 subsets

@@ -56,6 +56,21 @@ def test_statement_outside_a_transaction_is_its_own_transaction():
     assert txn.query_class == "OLAP" and round(txn.duration_ms) == 250
 
 
+def test_the_poolers_relabelling_statement_is_not_a_tenant_transaction():
+    """A transaction-mode pooler sends this itself when it hands a server connection to a client
+    with a different application_name. Counted as a transaction it would be replayed and measured."""
+    a = Assembler()
+    for sql in ("SET application_name='olap';", "set application_name = 'oltp'", "SET application_name TO 'olap';"):
+        assert a.feed(rec(5, "01.000", f"duration: 0.133 ms  statement: {sql}", app="olap")) is None
+    # The next statement on that connection is still seen, and other settings are still the tenant's.
+    assert a.feed(rec(5, "01.100", "duration: 80.0 ms  execute <unnamed>: SELECT count(*) FROM ch.orders", app="olap")).query_class == "OLAP"
+    assert a.feed(rec(5, "01.200", "duration: 0.1 ms  statement: SET work_mem = '64MB'")) is not None
+    # Inside a tenant's own transaction it is the tenant's statement and is kept.
+    a.feed(rec(6, "02.000", "duration: 0.01 ms  statement: BEGIN"))
+    a.feed(rec(6, "02.001", "duration: 0.1 ms  statement: SET application_name='report'"))
+    assert len(a.feed(rec(6, "02.002", "duration: 0.01 ms  statement: COMMIT")).statements) == 1
+
+
 def test_rollback_and_errors_mark_the_transaction_failed():
     a = Assembler()
     a.feed(rec(9, "00.000", "duration: 0.01 ms  statement: BEGIN"))

@@ -25,5 +25,13 @@ them is an evaluation result, and nothing here supports a claim about how well D
 - The capture includes the pooler's own `SET application_name` statements, which are replayed as transactions of the
   tenant that uses two connection classes.
 
+## E1 re-judged with the pair-based gate (`e1/rejudge.txt`, produced by `e1/rejudge.py`; no new measurement)
+
+After E1 the gate was changed to take its interval from the disagreement between replay pairs, to need both arm orders
+before calling harm, and the capture to drop the pooler's statements. On the same 28 runs the false rejections are gone
+(0 in 3,400 reordered sequences), and every verdict is INCONCLUSIVE at 3, 5, 9, 14 and 28 pairs: identical arms differ
+by 5-12% from pair to pair on this laptop, so no tenant can be shown safe at a 5% margin in a practical number of pairs.
+`e1/analyze.py` is the frozen script for the gate as it was at commit a8c6813 and does not run against the current gate.
+
 Large raw files are gzip-compressed (`run_L*.json.gz`, `host.jsonl.gz`). Scripts in these folders were run from
 `results/<folder>/`, which is not tracked; paths inside them refer to that location.

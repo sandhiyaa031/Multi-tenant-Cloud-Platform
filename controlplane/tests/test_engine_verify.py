@@ -16,10 +16,10 @@ from app.engine import Config, Engine
 TARGET, NEIGHBOUR = "t_analytic/OLAP", "t_steady/OLTP"
 INDEX = {"type": "create_index", "table": "order_line", "columns": ["ol_i_id"], "tenant_role": "t_analytic"}
 WINDOW_S = 120.0
-MAX_LOOKS = 3
+MAX_LOOKS = 4
 
 
-def stream(n: int, mean_ms: float, seed: int, noise: float = 0.05) -> list[list[float]]:
+def stream(n: int, mean_ms: float, seed: int, noise: float = 0.01) -> list[list[float]]:
     """`n` transactions spread evenly over the window, log-normal latencies."""
     rng = np.random.default_rng(seed)
     times = np.linspace(0, WINDOW_S, n, endpoint=False)
@@ -27,8 +27,8 @@ def stream(n: int, mean_ms: float, seed: int, noise: float = 0.05) -> list[list[
 
 
 def twin_result(target_factor: float, neighbour_factor: float, neighbour_n: int = 600, seed: int = 0,
-                neighbour_noise: float = 0.05) -> dict:
-    """One twin run: treatment latency = control latency x factor, per tenant."""
+                neighbour_noise: float = 0.01) -> dict:
+    """One twin run (one replay pair): treatment latency = control latency x factor, per tenant."""
     def arm(target: float, neighbour: float, offset: int, **extra) -> dict:
         return {"samples": {TARGET: stream(600, 100 * target, seed + offset),
                             NEIGHBOUR: stream(neighbour_n, 10 * neighbour, seed + offset + 1, neighbour_noise)},
@@ -103,16 +103,22 @@ def steps(detail: dict) -> list[tuple[str, str]]:
     return [(s["tier"], s["decision"]) for s in detail["steps"]]
 
 
-def test_clear_benefit_with_an_unharmed_neighbour_is_decided_in_one_replay(engine, client, org, cluster):
-    detail, twin = verify(engine, client, org, cluster, [twin_result(0.5, 1.0)])
-    assert len(twin.calls) == 1 and twin.calls[0]["action"]["type"] == "create_index"
+def pairs(target_factor: float, neighbour_factor: float, **options) -> list[dict]:
+    """A script of MAX_LOOKS replay pairs with the same true effect and independent noise."""
+    return [twin_result(target_factor, neighbour_factor, seed=s * 1000, **options) for s in range(MAX_LOOKS)]
+
+
+def test_clear_benefit_with_an_unharmed_neighbour_is_approved_once_pairs_agree(engine, client, org, cluster):
+    detail, twin = verify(engine, client, org, cluster, pairs(0.5, 1.0))
+    # One replay pair decides nothing; the verdict comes as soon as enough pairs agree.
+    assert 2 <= len(twin.calls) <= MAX_LOOKS and twin.calls[0]["action"]["type"] == "create_index"
     assert steps(detail) == [("T0", "APPROVE"), ("T1", "APPROVE"), ("T2", "APPROVE")]
     # Passing verification is not approval: without auto-approve a person still decides.
     assert detail["state"] == "AWAITING_APPROVAL"
     run = detail["twin_runs"][0]
-    assert run["repetitions"] == 1 and run["replay_errors"] == 0 and run["storage_delta_bytes"] == 4096
+    assert run["repetitions"] == len(twin.calls) and run["replay_errors"] == 0 and run["storage_delta_bytes"] == 4096
     verdict = run["verdict"]
-    assert verdict["looks"] == 1
+    assert verdict["looks"] == len(twin.calls)
     assert verdict["effects"][TARGET]["status"] == "BENEFITS" and verdict["effects"][NEIGHBOUR]["status"] == "SAFE"
     # The other gate mode's verdict on the same measurements is recorded, and decides nothing.
     assert verdict["shadow"]["mode"] == "aggregate"
@@ -120,16 +126,28 @@ def test_clear_benefit_with_an_unharmed_neighbour_is_decided_in_one_replay(engin
 
 
 def test_auto_approve_applies_only_to_a_firm_approval(engine, client, org, cluster):
-    detail, _ = verify(engine, client, org, cluster, [twin_result(0.5, 1.0)], auto_approve=True)
+    detail, _ = verify(engine, client, org, cluster, pairs(0.5, 1.0), auto_approve=True)
     assert detail["state"] == "APPROVED"
 
 
 def test_harm_to_a_neighbour_rejects_however_much_the_target_gains(engine, client, org, cluster):
-    detail, twin = verify(engine, client, org, cluster, [twin_result(0.3, 1.4)], auto_approve=True)
-    assert len(twin.calls) == 1  # harm shown is final: no further replay is spent on it
+    detail, twin = verify(engine, client, org, cluster, pairs(0.3, 1.4), auto_approve=True)
+    # Harm is final once it has been seen with each arm running first: no further replay is spent on it.
+    assert 2 <= len(twin.calls) < MAX_LOOKS
+    assert {c["treatment_first"] for c in twin.calls} == {False, True}
     assert detail["state"] == "REJECTED"
     assert NEIGHBOUR in detail["state_reason"]
     assert detail["twin_runs"][0]["verdict"]["effects"][NEIGHBOUR]["status"] == "HARMED"
+
+
+def test_one_disturbed_replay_is_not_harm(engine, client, org, cluster):
+    """The neighbour is three times slower in the treatment arm of the first replay only: something
+    else on the machine, not the action. The later pairs disagree with it, so nothing is shown."""
+    script = [twin_result(0.5, 3.0, seed=7)] + pairs(0.5, 1.0)[1:]
+    detail, twin = verify(engine, client, org, cluster, script, auto_approve=True)
+    assert len(twin.calls) == MAX_LOOKS
+    assert detail["state"] == "INCONCLUSIVE"
+    assert detail["twin_runs"][0]["verdict"]["effects"][NEIGHBOUR]["status"] == "UNCERTAIN"
 
 
 def test_uncertain_verdict_buys_more_replays_and_is_never_applied(engine, client, org, cluster):
@@ -137,8 +155,8 @@ def test_uncertain_verdict_buys_more_replays_and_is_never_applied(engine, client
     script = [twin_result(0.5, 1.0, neighbour_n=5, seed=s) for s in range(MAX_LOOKS)]
     detail, twin = verify(engine, client, org, cluster, script, auto_approve=True)
     assert len(twin.calls) == MAX_LOOKS
-    # With one repetition per replay, the arm that runs first alternates between replays.
-    assert [c["treatment_first"] for c in twin.calls] == [False, True, False]
+    # The arm that runs first alternates between replays.
+    assert [c["treatment_first"] for c in twin.calls] == [False, True, False, True]
     assert detail["state"] == "INCONCLUSIVE"  # auto-approve does not cover an uncertain result
     assert steps(detail)[-1] == ("T2", "INCONCLUSIVE")
     run = detail["twin_runs"][0]
@@ -147,14 +165,14 @@ def test_uncertain_verdict_buys_more_replays_and_is_never_applied(engine, client
 
 
 def test_a_later_replay_can_settle_what_the_first_could_not(engine, client, org, cluster):
-    # 30 neighbour transactions per replay, fewer once the warm-up is dropped: one replay
-    # is below the minimum the gate will judge, two together are enough.
-    script = [twin_result(0.5, 1.0, neighbour_n=30, seed=s, neighbour_noise=0.005) for s in range(MAX_LOOKS)]
+    # 30 neighbour transactions per replay, fewer once the warm-up is dropped: one replay is
+    # below the minimum the gate will judge. Its pairs still count once there are enough of them.
+    script = pairs(0.5, 1.0, neighbour_n=30, neighbour_noise=0.002)
     detail, twin = verify(engine, client, org, cluster, script)
-    assert len(twin.calls) == 2
+    assert len(twin.calls) > 1
     assert detail["state"] == "AWAITING_APPROVAL"
     run = detail["twin_runs"][0]
-    assert run["verdict"]["looks"] == 2 and run["transactions"] == 2 * 630
+    assert run["verdict"]["looks"] == len(twin.calls) and run["transactions"] == len(twin.calls) * 630
     assert run["verdict"]["effects"][NEIGHBOUR]["status"] == "SAFE"
 
 
@@ -185,10 +203,10 @@ def test_index_the_planner_would_not_use_is_rejected_before_any_replay(engine, c
 
 
 def test_unavailable_whatif_does_not_decide_and_the_replay_still_runs(engine, client, org, cluster):
-    detail, twin = verify(engine, client, org, cluster, [twin_result(0.5, 1.0)],
+    detail, twin = verify(engine, client, org, cluster, pairs(0.5, 1.0),
                           whatif=httpx.ConnectError("twin unreachable"))
     assert steps(detail) == [("T0", "APPROVE"), ("T1", "SKIPPED"), ("T2", "APPROVE")]
-    assert len(twin.calls) == 1 and detail["state"] == "AWAITING_APPROVAL"
+    assert twin.calls and detail["state"] == "AWAITING_APPROVAL"
 
 
 @pytest.mark.parametrize("mode", ["canary_only", "none"])
@@ -208,7 +226,7 @@ def test_advisory_action_goes_to_a_human_without_touching_the_twin(engine, clien
 def test_aggregate_gate_approves_the_change_the_per_tenant_gate_rejects(engine, client, org, cluster):
     """The same measurements, judged the way single-tenant tuners judge them. The
     analytical target dominates total latency, so the neighbour's harm disappears."""
-    detail, _ = verify(engine, client, org, cluster, [twin_result(0.3, 1.4)], gate_mode="aggregate")
+    detail, _ = verify(engine, client, org, cluster, pairs(0.3, 1.4), gate_mode="aggregate")
     assert detail["state"] == "AWAITING_APPROVAL"
     shadow = detail["twin_runs"][0]["verdict"]["shadow"]
     assert shadow["mode"] == "per_tenant" and shadow["decision"] == "REJECT"

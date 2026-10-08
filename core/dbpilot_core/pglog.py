@@ -24,6 +24,9 @@ _PARAM = re.compile(r"\$(\d+) = (NULL|'(?:[^']|'')*')")
 _PLACEHOLDER = re.compile(r"\$(\d+)")
 _NUMERIC = re.compile(r"^'(-?\d+(?:\.\d+)?)'$")
 _END = {"COMMIT", "ROLLBACK", "END", "ABORT"}
+# A transaction-mode pooler relabels a server connection with this statement before handing it
+# to a client whose application_name differs. It is the pooler's, not a tenant's.
+_POOLER_SET = re.compile(r"^SET\s+application_name\s*(?:=|TO)\s*'[^']*'\s*;?$", re.I)
 
 
 @dataclass
@@ -115,6 +118,8 @@ class Assembler:
                               start=start, end=end)
             if verb in ("BEGIN", "START"):
                 self._open[pid] = txn
+                return None
+            if _POOLER_SET.match(sql):
                 return None
             # A statement outside BEGIN..COMMIT is its own transaction.
             txn.statements.append(statement)

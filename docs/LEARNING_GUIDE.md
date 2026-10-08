@@ -345,9 +345,22 @@ measured yet. Concurrent writes do not replay deterministically.
 
 **Key ideas.**
 - *Ratio.* For each tenant and class: treatment p95 ÷ control p95. Below 1 is faster.
-- *Confidence interval by block bootstrap.* Latencies close in time are
-  correlated, so whole 5-second buckets are resampled, the same buckets for both
-  arms, 2,000 times.
+- *Replay pairs as the unit of evidence.* One control replay and one treatment
+  replay of the same window form a pair, and each pair gives one ratio. The two
+  arms run one after the other, so even identical arms differ (the machine was
+  not in the same state twice). Requests inside one replay cannot reveal that;
+  only the disagreement between pairs can.
+- *Student's t interval.* The interval is mean ± t × standard deviation ÷ √pairs,
+  on the logarithm of the pair ratios. The t multiplier is large for few pairs
+  (about 12.7 for two pairs at 95%, 4.3 for three), which is the honest price of
+  estimating the spread from so little. An earlier version resampled 5-second
+  buckets inside the replays (a block bootstrap); with identical arms it called
+  harm in 2 of 9 verdicts, because it never saw the arm-to-arm difference. A
+  bootstrap over pairs was also tried on that data and covered the truth only
+  75% of the time with three pairs, against 95% for t.
+- *Both arm orders.* The arm that runs first alternates between pairs. Harm
+  counts only if it appears both when the treatment ran first and when it ran
+  second; otherwise it could be an effect of the order.
 - *Superiority* for the target: the whole interval lies below 0.90.
 - *Non-inferiority* for every other tenant: the whole interval lies below 1.05.
   "Not significantly worse" is not accepted.

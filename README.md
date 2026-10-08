@@ -445,14 +445,19 @@ Four tiers, cheapest first. A proposal stops at the first tier that rejects it.
 | T3 | Canary in production under a rollback contract | Minutes |
 
 **The gate.** For each tenant and class it computes treatment p95 ÷ control p95
-with a confidence interval (block bootstrap over time buckets, corrected for the
-number of tenants compared).
+with a confidence interval, corrected for the number of tenants compared. The
+unit of evidence is the replay pair (one control replay and one treatment replay
+of the same window): the interval is Student's t on the logarithm of each pair's
+ratio, so its width comes from how much the pairs disagree. One pair decides
+nothing, because the two arms run one after the other and differ by themselves;
+an A/A diagnostic ([docs/evidence/e1](docs/evidence/README.md)) showed identical
+arms differing by 5–12% from pair to pair on the development laptop.
 
 | Finding | Condition | Consequence |
 |---|---|---|
 | Benefit shown | Target's whole interval below 0.90 | Required for approval |
 | Unharmed | Another tenant's whole interval below 1.05 | Required for every other tenant |
-| Harm shown | A tenant's whole interval above 1.05, or an objective it was meeting is broken | Reject |
+| Harm shown | A tenant's whole interval above 1.05, or an objective it was meeting is broken, and seen both with the treatment arm running first and with it running second | Reject |
 | Uncertain | Interval straddles a limit, or too few samples | Replay another window; still uncertain after three: inconclusive, escalated, never applied automatically |
 
 **More evidence instead of a guess.** When the verdict is uncertain, the engine
@@ -697,7 +702,7 @@ docker compose run --rm twin-test                                               
 
 | Suite | Tests | Examples of what is proven |
 |---|---|---|
-| Control plane and core | 156 | A VIEWER cannot write even with raw SQL; organizations cannot see each other; the audit log cannot be altered; no path takes a proposal to production without verification; the gate rejects a change that helps its target and harms a neighbour, and the aggregate gate approves the same change; the agent's out-of-space output is bounced back, not executed; an uncertain twin verdict buys more replays and is never applied; a failed twin run is never an approval; an agent proposal cannot be approved before verification |
+| Control plane and core | 163 | A VIEWER cannot write even with raw SQL; organizations cannot see each other; the audit log cannot be altered; no path takes a proposal to production without verification; the gate rejects a change that helps its target and harms a neighbour, and the aggregate gate approves the same change; the agent's out-of-space output is bounced back, not executed; an uncertain twin verdict buys more replays and is never applied; a failed twin run is never an approval; an agent proposal cannot be approved before verification |
 | Data plane | 36 | A tenant sees only its warehouses and cannot reach another tenant's partition; partitions are pruned under row-level security; an index can be built for one tenant; the replica follows and is read-only; the pooler refuses non-tenant roles; the executor role can apply and undo every executable action and is refused everything outside the action space |
 | Workload driver | 20 | Each transaction and query runs correctly as a tenant; New-Order keeps orders and order lines consistent; the open-loop generator hits its target rate; the report counts only what the trials contain |
 | Twin node agent | 46 | A clone is a standalone database at exactly the frozen moment; what is done on a clone reaches neither production nor the source; every arm starts from the same state; replay runs each transaction as its tenant at its original offset; a run that fails leaves the source following production |

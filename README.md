@@ -8,13 +8,6 @@ those proposals: it measures each one on a real clone of the database, under a
 replay of the real workload, for every tenant, and applies it only when the
 tenant it is meant to help benefits **and no other tenant is harmed**.
 
-> **Project state.** Every component in the loop is implemented: telemetry,
-> proposers, the digital twin, the verification engine, canary and rollback, and
-> the web console. A proposal has been taken through all tiers on the
-> development stack. What does **not** exist yet is an experimental evaluation:
-> only single pilot trials have been run, on one machine where the planes are
-> not isolated from each other, so **no results are claimed**. The
-> [status table](#20-implementation-status) says how far each part is verified.
 
 ---
 

@@ -27,6 +27,22 @@ def test_whatif_reports_which_observed_queries_the_planner_would_speed_up():
     assert result["queries"][0]["query"] == LOOKUP
 
 
+def test_a_tenants_index_is_judged_on_that_tenants_partition():
+    """Tenants name the shared table. Planned across every tenant's partition, an index on one
+    partition saves only that partition's share, and a larger neighbour hides the benefit."""
+    shared = "SELECT * FROM ch.order_line WHERE ol_i_id = $1"
+    result = whatif.index_whatif(INDEX_FOR_T_A, [shared])
+    assert result["improved"] == 1 and result["queries"][0]["query"] == shared
+    assert result["queries"][0]["ratio"] < 0.9
+    # Exactly what the same lookup costs when written against the tenant's partition.
+    direct = whatif.index_whatif(INDEX_FOR_T_A, [LOOKUP])["queries"][0]
+    assert result["queries"][0]["cost_before"] == direct["cost_before"]
+    assert result["queries"][0]["cost_after"] == direct["cost_after"]
+    # An index for every tenant is still judged on the shared table as written.
+    everyone = whatif.index_whatif({**INDEX_FOR_T_A, "tenant_role": None}, [shared])
+    assert everyone["improved"] == 1
+
+
 def test_whatif_builds_nothing_anywhere():
     whatif.index_whatif(INDEX_FOR_T_A, [LOOKUP])
     assert real_indexes(pg.SOURCE_PORT) == 0 and real_indexes(PRIMARY_PORT) == 0

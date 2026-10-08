@@ -3,6 +3,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const BASE = "/api/v1";
 const TOKEN_KEY = "dbpilot.token";
+const NOTICE_KEY = "dbpilot.notice";
+// Reads and clears the reason the last session ended, if it ended by itself.
+export function takeSessionNotice(): string | null {
+  const notice = sessionStorage.getItem(NOTICE_KEY);
+  sessionStorage.removeItem(NOTICE_KEY);
+  return notice;
+}
+export interface PublicConfig { signup_enabled: boolean; mail_delivery: boolean }
 
 export type Role = "VIEWER" | "OPERATOR" | "ADMIN";
 export interface Org { id: string; slug: string; name: string; role: Role }
@@ -29,15 +37,22 @@ export async function api<T = any>(path: string, init: { method?: string; body?:
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   if (init.body !== undefined) headers["Content-Type"] = "application/json";
-  const res = await fetch(BASE + path, { method: init.method ?? "GET", headers, body: init.body === undefined ? undefined : JSON.stringify(init.body) });
+  let res: Response;
+  try {
+    res = await fetch(BASE + path, { method: init.method ?? "GET", headers, body: init.body === undefined ? undefined : JSON.stringify(init.body) });
+  } catch {
+    throw new ApiError(0, "Cannot reach the DBPilot API. Check that the stack is running.");
+  }
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   let data: any = null;
   try { data = text ? JSON.parse(text) : null; } catch { /* non-JSON error body */ }
   if (!res.ok) {
     const detail = data?.detail;
-    const message = typeof detail === "string" ? detail : Array.isArray(detail) ? detail.map((d: any) => d.msg).join("; ") : res.statusText;
-    if (res.status === 401 && token) { setToken(null); window.dispatchEvent(new Event("dbpilot:logout")); }
+    const message = typeof detail === "string" ? detail : Array.isArray(detail) ? detail.map((d: any) => d.msg).join("; ")
+      : res.status >= 502 ? "The DBPilot API is not responding. Check that the stack is running." : res.statusText || `request failed (${res.status})`;
+    // A token the server no longer accepts: the session has ended. Say so on the sign-in page.
+    if (res.status === 401 && token) { setToken(null); sessionStorage.setItem(NOTICE_KEY, "expired"); window.dispatchEvent(new Event("dbpilot:logout")); }
     throw new ApiError(res.status, message);
   }
   return data as T;

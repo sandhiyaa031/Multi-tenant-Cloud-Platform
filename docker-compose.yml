@@ -59,6 +59,15 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set in .env}
       PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:5173}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      # "false" closes sign-up: only invited people can join an existing organization.
+      SIGNUP_ENABLED: ${SIGNUP_ENABLED:-true}
+      # Mail for password resets and invitations. Without SMTP_HOST nothing is sent and
+      # an organization's admin is handed the links instead.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-25}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-dbpilot@localhost}
       # The LLM agent. Without a key, the rule-based proposer still works.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AGENT_MODEL: ${AGENT_MODEL:-claude-opus-5-5}
@@ -332,6 +341,23 @@ services:
     depends_on:
       - pgbouncer
 
+  # Demo traffic: the four tenants at a light, steady rate, so the console has live
+  # telemetry to show and a canary has a baseline. Start and stop with:
+  #   docker compose --profile demo up -d demo-load
+  #   docker compose --profile demo stop demo-load
+  demo-load:
+    build: ./workload
+    profiles: ["demo"]
+    cpuset: "7-8"
+    command: ["--profile", "profiles/demo.json", "--duration", "86400"]
+    environment:
+      DP_POOLER_HOST: pgbouncer
+      DP_TENANT_PASSWORD: ${DATAPLANE_TENANT_PASSWORD}
+    mem_limit: 384m
+    restart: unless-stopped
+    depends_on:
+      - pgbouncer
+
   # Evaluation harness: one scenario under one verification configuration. Run with:
   #   docker compose run --rm evaluation --scenario S1_missing_index --config C4_twin_per_tenant
   evaluation:
@@ -374,6 +400,24 @@ services:
       - ./twin/agent:/srv/agent:ro
       - ./twin/tests:/srv/tests:ro
       - ./core/dbpilot_core:/srv/dbpilot_core:ro
+
+  # Browser tests of the demo path, against the running stack with demo-load started.
+  #   docker compose run --rm e2e                                      sign-in, pages, canary, rollback (2 min)
+  #   docker compose run --rm e2e npx playwright test twin.spec.ts     the same through the digital twin (15 min)
+  e2e:
+    image: mcr.microsoft.com/playwright:v1.48.0-jammy
+    profiles: ["test"]
+    working_dir: /e2e
+    entrypoint: ["sh", "-c", "npm install --no-audit --no-fund --silent && exec \"$$@\"", "--"]
+    command: ["npx", "playwright", "test", "demo.spec.ts"]
+    environment:
+      BASE_URL: http://web
+      DEMO_ADMIN_EMAIL: ${DEMO_ADMIN_EMAIL:-admin@demo.dbpilot.dev}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD}
+    volumes:
+      - ./web/e2e:/e2e
+    depends_on:
+      - web
 
   # Run with: docker compose run --rm dp-test
   dp-test:

@@ -54,6 +54,13 @@ function OverviewFor({ cluster }: { cluster: Cluster }) {
     <div className="stack">
       <PageHead title="Overview">What the cluster is doing now, who is meeting their objectives, and where each proposed change stands.</PageHead>
       {!cluster.primary_host && <div className="notice">This cluster has no primary address registered, so the collector is not observing it.</div>}
+      {cluster.primary_host && tenants.length === 0 && <div className="notice">No tenants are registered on this cluster yet. Add them under <Link to="/app/tenants">Tenants</Link>.</div>}
+      {cluster.primary_host && tenants.length > 0 && latency.data?.length === 0 && (
+        <div className="notice" role="status">
+          <strong>No tenant traffic in the last 30 minutes.</strong> The charts below stay empty until tenants send queries.
+          Start the demo workload with <code>docker compose --profile demo up -d demo-load</code>; the first points appear after two collector intervals.
+        </div>
+      )}
       <div className="grid cols-4">
         <Stat label="Tenants" value={tenants.length} hint={`on cluster ${cluster.name}`} />
         <Stat label="Objectives violated" value={violating ?? "–"} hint={slo.data ? `of ${slo.data.length} objectives, last 15 min` : undefined} />
@@ -87,10 +94,18 @@ function TenantsFor({ cluster }: { cluster: Cluster }) {
   const { tenants, colors, reloadTenants } = useCluster();
   const slo = useApi<any[]>(`/clusters/${cluster.id}/slo-status?minutes=15`, POLL);
   const [open, setOpen] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const operator = can(me?.org.role, "OPERATOR");
+  const remove = (t: { id: string; name: string }) => window.confirm(`Remove tenant ${t.name} from DBPilot? Its data on the data plane is not touched.`)
+    && api(`/tenants/${t.id}`, { method: "DELETE" }).then(() => { setError(null); reloadTenants(); slo.reload(); }).catch((e: Error) => setError(e.message));
   return (
     <div className="stack">
-      <PageHead title="Tenants">Each tenant shares the cluster's tables, connects as its own database role, and owns a range of warehouses and its own partitions.</PageHead>
+      <PageHead title="Tenants" action={operator && <button className="primary" onClick={() => setAdding(!adding)}>{adding ? "Close" : "Add tenant"}</button>}>
+        Each tenant shares the cluster's tables, connects as its own database role, and owns a range of warehouses and its own partitions.
+      </PageHead>
+      {error && <div className="error" role="alert">{error}</div>}
+      {adding && <TenantForm cluster={cluster} onDone={() => { setAdding(false); reloadTenants(); }} />}
       <Card title="Tenants on this cluster">
         {tenants.length === 0 ? <div className="empty">No tenants are registered on this cluster.</div> : (
           <div className="table-wrap"><table>
@@ -105,7 +120,7 @@ function TenantsFor({ cluster }: { cluster: Cluster }) {
                   <td>{t.profile.replace("_", " ").toLowerCase()}</td>
                   <td>{t.warehouse_lo}–{t.warehouse_hi}</td>
                   <td>{mine.length === 0 ? <span className="muted">none</span> : bad ? <Badge tone="critical">violating</Badge> : <Badge tone="good">meeting</Badge>}</td>
-                  <td>{operator && <button className="link" onClick={() => setOpen(open === t.id ? null : t.id)}>{open === t.id ? "Close" : "Set objective"}</button>}</td>
+                  <td>{operator && <span className="row"><button className="link" onClick={() => setOpen(open === t.id ? null : t.id)}>{open === t.id ? "Close" : "Set objective"}</button><button className="link" onClick={() => remove(t)}>Remove</button></span>}</td>
                 </tr>
               );
             })}</tbody>
@@ -115,6 +130,43 @@ function TenantsFor({ cluster }: { cluster: Cluster }) {
       </Card>
       <Card title="Objectives" sub="observed over the last 15 minutes"><Load of={slo} empty="No objectives defined yet.">{(rows) => <SloTable rows={rows} colors={colors} />}</Load></Card>
     </div>
+  );
+}
+
+// The four roles the demo data plane is seeded with, so a new organization can register them in one step each.
+const DEMO_TENANTS = [
+  { name: "steady", db_role: "t_steady", warehouse_lo: 1, warehouse_hi: 2, profile: "STEADY_OLTP" },
+  { name: "bursty", db_role: "t_bursty", warehouse_lo: 3, warehouse_hi: 4, profile: "BURSTY_OLTP" },
+  { name: "analytic", db_role: "t_analytic", warehouse_lo: 5, warehouse_hi: 8, profile: "ANALYTICAL" },
+  { name: "mixed", db_role: "t_mixed", warehouse_lo: 9, warehouse_hi: 12, profile: "MIXED" },
+];
+
+function TenantForm({ cluster, onDone }: { cluster: Cluster; onDone: () => void }) {
+  const [form, setForm] = useState(DEMO_TENANTS[0]);
+  const [error, setError] = useState<string | null>(null);
+  const set = (k: keyof typeof form, number = false) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    setForm({ ...form, [k]: number ? Number(e.target.value) : e.target.value });
+  const save = () => api("/tenants", { method: "POST", body: { ...form, cluster_id: cluster.id } }).then(onDone).catch((e: Error) => setError(e.message));
+  return (
+    <Card title="Add a tenant" sub="registers a database role and warehouse range that already exist on the data plane; nothing is created there">
+      <div className="row">
+        <span className="muted">Demo data plane:</span>
+        {DEMO_TENANTS.map((t) => <button key={t.name} className="link" onClick={() => setForm(t)}>{t.name}</button>)}
+      </div>
+      <div className="row" style={{ marginTop: 12 }}>
+        <input aria-label="Tenant name" placeholder="name" value={form.name} onChange={set("name")} style={{ width: 140 }} />
+        <input aria-label="Database role" placeholder="database role" value={form.db_role} onChange={set("db_role")} style={{ width: 150 }} />
+        <span className="muted">warehouses</span>
+        <input aria-label="First warehouse" type="number" min={1} value={form.warehouse_lo} onChange={set("warehouse_lo", true)} style={{ width: 80 }} />
+        <span className="muted">to</span>
+        <input aria-label="Last warehouse" type="number" min={1} value={form.warehouse_hi} onChange={set("warehouse_hi", true)} style={{ width: 80 }} />
+        <select aria-label="Profile" value={form.profile} onChange={set("profile")}>
+          {["STEADY_OLTP", "BURSTY_OLTP", "ANALYTICAL", "MIXED"].map((p) => <option key={p} value={p}>{p.replace("_", " ").toLowerCase()}</option>)}
+        </select>
+        <button className="primary" onClick={save}>Add tenant</button>
+      </div>
+      {error && <p className="error" role="alert" style={{ marginTop: 10 }}>{error}</p>}
+    </Card>
   );
 }
 

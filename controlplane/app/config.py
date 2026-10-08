@@ -12,6 +12,7 @@ class Settings:
     invite_token_ttl_hours: int
     public_web_url: str
     cors_origins: tuple[str, ...]
+    signup_enabled: bool
 
 
 @lru_cache
@@ -30,4 +31,6 @@ def get_settings() -> Settings:
         cors_origins=tuple(
             o.strip() for o in os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(",") if o.strip()
         ),
+        # Anyone who can reach the console can create an organization unless this is switched off.
+        signup_enabled=os.environ.get("SIGNUP_ENABLED", "true").lower() not in ("0", "false", "no"),
     )

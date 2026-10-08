@@ -1,12 +1,16 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
-import { api, type Session } from "../api";
+import { api, takeSessionNotice, useApi, type PublicConfig, type Session } from "../api";
 import { useAuth } from "../App";
+
+// What this deployment offers before anyone is signed in. Until it has answered, nothing is hidden.
+const usePublicConfig = () => useApi<PublicConfig>("/auth/config").data;
 
 const LOOP = ["Observe", "Diagnose", "Plan", "Digital twin", "Verify", "Canary", "Monitor", "Rollback", "Learn"];
 
 function PublicLayout({ children }: { children: ReactNode }) {
   const { me } = useAuth();
+  const config = usePublicConfig();
   return (
     <div className="public">
       <nav className="public-nav">
@@ -15,7 +19,7 @@ function PublicLayout({ children }: { children: ReactNode }) {
           <Link to="/product">Product</Link>
           <Link to="/architecture">Architecture</Link>
           {me ? <Link to="/app" className="button primary">Open console</Link> : (
-            <><Link to="/login">Sign in</Link><Link to="/signup" className="button primary">Create account</Link></>
+            <><Link to="/login">Sign in</Link>{config?.signup_enabled !== false && <Link to="/signup" className="button primary">Create account</Link>}</>
           )}
         </div>
       </nav>
@@ -25,6 +29,7 @@ function PublicLayout({ children }: { children: ReactNode }) {
 }
 
 export function Landing() {
+  const config = usePublicConfig();
   return (
     <PublicLayout>
       <header className="hero">
@@ -35,7 +40,8 @@ export function Landing() {
         </p>
         <div className="loop">{LOOP.map((s) => <span key={s}>{s}</span>)}</div>
         <div className="row">
-          <Link to="/signup" className="button primary">Create an organization</Link>
+          {config?.signup_enabled === false ? <Link to="/login" className="button primary">Sign in</Link>
+            : <Link to="/signup" className="button primary">Create an organization</Link>}
           <Link to="/product" className="button">How it works</Link>
         </div>
       </header>
@@ -161,16 +167,22 @@ function useSubmit<T>(fn: () => Promise<T>, done: (r: T) => void) {
 export function Login() {
   const { me, signIn } = useAuth();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const config = usePublicConfig();
+  // Only ever return to a page of this console, never to an address someone put in a link.
+  const next = params.get("next")?.startsWith("/app") ? params.get("next")! : "/app";
+  const [notice] = useState(takeSessionNotice);
   const [email, setEmail] = useState(""); const [password, setPassword] = useState("");
-  const f = useSubmit(() => api<Session>("/auth/login", { method: "POST", body: { email, password } }), (s) => { signIn(s); navigate("/app"); });
-  if (me) return <Navigate to="/app" replace />;
+  const f = useSubmit(() => api<Session>("/auth/login", { method: "POST", body: { email, password } }), (s) => { signIn(s); navigate(next); });
+  if (me) return <Navigate to={next} replace />;
   return (
-    <AuthCard title="Sign in" footer={<>New here? <Link to="/signup">Create an organization</Link></>}>
+    <AuthCard title="Sign in" footer={config?.signup_enabled === false ? null : <>New here? <Link to="/signup">Create an organization</Link></>}>
+      {notice === "expired" && <p className="notice" role="status">Your session has ended. Sign in again to continue where you were.</p>}
       <form onSubmit={f.submit}>
-        <div className="field"><label>Email</label><input type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-        <div className="field"><label>Password</label><input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></div>
-        {f.error && <p className="error">{f.error}</p>}
-        <div className="spread"><button className="primary" disabled={f.busy}>Sign in</button><Link to="/forgot-password">Forgot password?</Link></div>
+        <label className="field"><span>Email</span><input type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
+        <label className="field"><span>Password</span><input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+        {f.error && <p className="error" role="alert">{f.error}</p>}
+        <div className="spread"><button className="primary" disabled={f.busy}>{f.busy ? "Signing in…" : "Sign in"}</button><Link to="/forgot-password">Forgot password?</Link></div>
       </form>
     </AuthCard>
   );
@@ -181,17 +193,27 @@ export function Signup() {
   const navigate = useNavigate();
   const [form, setForm] = useState({ org_name: "", full_name: "", email: "", password: "" });
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [k]: e.target.value });
-  const f = useSubmit(() => api<Session>("/auth/signup", { method: "POST", body: form }), (s) => { signIn(s); navigate("/app"); });
+  const f = useSubmit(() => api<Session>("/auth/signup", { method: "POST", body: form }), (s) => { signIn(s); navigate("/app/settings"); });
+  const config = usePublicConfig();
+  if (config?.signup_enabled === false) return (
+    <AuthCard title="Create an organization" footer={<Link to="/login">Back to sign in</Link>}>
+      <p className="notice">Creating organizations is switched off on this deployment. Ask an admin of an existing organization to invite you.</p>
+    </AuthCard>
+  );
   return (
     <AuthCard title="Create an organization" footer={<>Already have an account? <Link to="/login">Sign in</Link></>}>
+      <p className="notice">
+        A new organization starts empty. DBPilot observes databases it has been given access to; on this deployment that is
+        the demo data plane, which you register under Settings after signing up.
+      </p>
       <form onSubmit={f.submit}>
-        <div className="field"><label>Organization name</label><input required minLength={2} value={form.org_name} onChange={set("org_name")} /></div>
-        <div className="field"><label>Your name</label><input required value={form.full_name} onChange={set("full_name")} /></div>
-        <div className="field"><label>Email</label><input type="email" autoComplete="username" required value={form.email} onChange={set("email")} /></div>
-        <div className="field"><label>Password (at least 10 characters)</label><input type="password" autoComplete="new-password" required minLength={10} value={form.password} onChange={set("password")} /></div>
+        <label className="field"><span>Organization name</span><input required minLength={2} value={form.org_name} onChange={set("org_name")} /></label>
+        <label className="field"><span>Your name</span><input required value={form.full_name} onChange={set("full_name")} /></label>
+        <label className="field"><span>Email</span><input type="email" autoComplete="username" required value={form.email} onChange={set("email")} /></label>
+        <label className="field"><span>Password (at least 10 characters)</span><input type="password" autoComplete="new-password" required minLength={10} value={form.password} onChange={set("password")} /></label>
         {f.error && <p className="error">{f.error}</p>}
         <button className="primary" disabled={f.busy}>Create organization</button>
-        <p className="muted" style={{ marginTop: 12 }}>You become its first admin.</p>
+        <p className="muted" style={{ marginTop: 12 }}>You become its first admin. No confirmation email is sent.</p>
       </form>
     </AuthCard>
   );
@@ -200,11 +222,21 @@ export function Signup() {
 export function Forgot() {
   const [email, setEmail] = useState(""); const [sent, setSent] = useState(false);
   const f = useSubmit(() => api("/auth/forgot-password", { method: "POST", body: { email } }), () => setSent(true));
+  const config = usePublicConfig();
+  // Without a mail server a link cannot reach anyone; say who can help instead of pretending.
+  if (config && !config.mail_delivery) return (
+    <AuthCard title="Reset your password" footer={<Link to="/login">Back to sign in</Link>}>
+      <p className="notice">
+        This deployment has no mail server, so a reset link cannot be emailed. Ask an admin of your organization to
+        create a password link for you under Settings → Members.
+      </p>
+    </AuthCard>
+  );
   return (
     <AuthCard title="Reset your password" footer={<Link to="/login">Back to sign in</Link>}>
       {sent ? <p className="notice">If that address has an account, a reset link has been sent. It expires in 30 minutes.</p> : (
         <form onSubmit={f.submit}>
-          <div className="field"><label>Email</label><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></div>
+          <label className="field"><span>Email</span><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
           {f.error && <p className="error">{f.error}</p>}
           <button className="primary" disabled={f.busy}>Send reset link</button>
         </form>
@@ -218,12 +250,19 @@ export function Reset() {
   const navigate = useNavigate();
   const token = params.get("token") ?? "";
   const [password, setPassword] = useState("");
-  const f = useSubmit(() => api("/auth/reset-password", { method: "POST", body: { token, new_password: password } }), () => navigate("/login"));
+  const [done, setDone] = useState(false);
+  const f = useSubmit(() => api("/auth/reset-password", { method: "POST", body: { token, new_password: password } }), () => setDone(true));
+  if (done) return (
+    <AuthCard title="Password set">
+      <p className="notice" role="status">Your password has been set.</p>
+      <button className="primary" onClick={() => navigate("/login")}>Go to sign in</button>
+    </AuthCard>
+  );
   return (
     <AuthCard title="Choose a new password">
       {!token ? <p className="error">This link is missing its token. Request a new one.</p> : (
         <form onSubmit={f.submit}>
-          <div className="field"><label>New password (at least 10 characters)</label><input type="password" autoComplete="new-password" required minLength={10} value={password} onChange={(e) => setPassword(e.target.value)} /></div>
+          <label className="field"><span>New password (at least 10 characters)</span><input type="password" autoComplete="new-password" required minLength={10} value={password} onChange={(e) => setPassword(e.target.value)} /></label>
           {f.error && <p className="error">{f.error}</p>}
           <button className="primary" disabled={f.busy}>Set password</button>
         </form>

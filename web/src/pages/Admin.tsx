@@ -1,5 +1,5 @@
 import { Fragment, useState } from "react";
-import { api, can, fmt, useApi, type Role } from "../api";
+import { api, can, fmt, useApi, type PublicConfig, type Role } from "../api";
 import { useAuth, useCluster } from "../App";
 import { Badge, Card, KeyValue, Load, PageHead } from "../ui";
 
@@ -50,11 +50,34 @@ export function Settings() {
   const [invite, setInvite] = useState({ email: "", full_name: "", role: "VIEWER" as Role });
   const [cluster, setCluster] = useState({ name: "", pooler_host: "", pooler_port: 6432, database_name: "app", primary_host: "", primary_port: 5432 });
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [link, setLink] = useState<{ for: string; url: string; note: string } | null>(null);
+  const config = useApi<PublicConfig>("/auth/config").data;
   const act = (p: Promise<unknown>, ok: string) => p.then(() => { setMessage({ ok: true, text: ok }); members.reload(); }).catch((e: Error) => setMessage({ ok: false, text: e.message }));
+  const sendInvite = () => api<any>("/members", { method: "POST", body: invite }).then((r) => {
+    members.reload();
+    setInvite({ email: "", full_name: "", role: "VIEWER" });
+    if (r.link) { setLink({ for: invite.email, url: r.link, note: "No mail server is configured, so the invitation was not emailed. Give this single-use link to the new member; they set their password with it." }); setMessage(null); }
+    else setMessage({ ok: true, text: r.needs_password ? "Invitation emailed with a link to set a password." : "Added. They already have an account and can sign in with their existing password." });
+  }).catch((e: Error) => setMessage({ ok: false, text: e.message }));
+  const passwordLink = (m: any) => api<any>(`/members/${m.user_id}/password-link`, { method: "POST" })
+    .then((r) => { setLink({ for: m.email, url: r.link, note: `Single-use link for setting a new password; it expires in ${r.expires_minutes} minutes.` }); setMessage(null); })
+    .catch((e: Error) => setMessage({ ok: false, text: e.message }));
+  const demo = () => setCluster({ name: "demo", pooler_host: "pgbouncer", pooler_port: 6432, database_name: "app", primary_host: "dp-primary", primary_port: 5432 });
   return (
     <div className="stack">
       <PageHead title="Settings">Your organization, its members and their roles, and the clusters it manages.</PageHead>
-      {message && <div className={message.ok ? "notice" : "error"}>{message.text}</div>}
+      {message && <div className={message.ok ? "notice" : "error"} role={message.ok ? "status" : "alert"}>{message.text}</div>}
+      {link && (
+        <div className="notice">
+          <strong>Link for {link.for}</strong>
+          <div>{link.note}</div>
+          <div className="link-box">
+            <input readOnly aria-label="Password link" value={link.url} onFocus={(e) => e.target.select()} />
+            <button onClick={() => navigator.clipboard?.writeText(link.url)}>Copy</button>
+            <button onClick={() => setLink(null)}>Dismiss</button>
+          </div>
+        </div>
+      )}
       <Card title="Organization">
         <KeyValue rows={[["Name", me?.org.name], ["Identifier", <span className="mono">{me?.org.slug}</span>], ["You are signed in as", `${me?.full_name} (${me?.email})`], ["Your role", me?.org.role.toLowerCase()]]} />
       </Card>
@@ -70,7 +93,12 @@ export function Settings() {
                     {["VIEWER", "OPERATOR", "ADMIN"].map((r) => <option key={r} value={r}>{r.toLowerCase()}</option>)}
                   </select>) : m.role.toLowerCase()}</td>
                 <td className="muted">{fmt.datetime(m.joined_at)}</td>
-                <td>{admin && <button className="link" onClick={() => act(api(`/members/${m.user_id}`, { method: "DELETE" }), "Member removed.")}>Remove</button>}</td>
+                <td>{admin && (
+                  <span className="row">
+                    {config && !config.mail_delivery && m.user_id !== me?.user_id && <button className="link" onClick={() => passwordLink(m)}>Password link</button>}
+                    {m.user_id !== me?.user_id && <button className="link" onClick={() => window.confirm(`Remove ${m.email} from this organization?`) && act(api(`/members/${m.user_id}`, { method: "DELETE" }), "Member removed.")}>Remove</button>}
+                  </span>
+                )}</td>
               </tr>
             ))}</tbody>
           </table></div>
@@ -80,7 +108,7 @@ export function Settings() {
             <input placeholder="Full name" value={invite.full_name} onChange={(e) => setInvite({ ...invite, full_name: e.target.value })} />
             <input placeholder="Email" type="email" value={invite.email} onChange={(e) => setInvite({ ...invite, email: e.target.value })} />
             <select value={invite.role} onChange={(e) => setInvite({ ...invite, role: e.target.value as Role })}>{["VIEWER", "OPERATOR", "ADMIN"].map((r) => <option key={r} value={r}>{r.toLowerCase()}</option>)}</select>
-            <button className="primary" onClick={() => act(api("/members", { method: "POST", body: invite }), "Invitation sent. The link to set a password is delivered by the server's mailer.")}>Invite</button>
+            <button className="primary" disabled={!invite.email || !invite.full_name} onClick={sendInvite}>Invite</button>
           </div>
         )}
       </Card>
@@ -95,12 +123,19 @@ export function Settings() {
           </table></div>
         )}
         {admin && (
-          <div className="row" style={{ marginTop: 14 }}>
+          <p className="secondary" style={{ marginTop: 14 }}>
+            Registering a cluster tells DBPilot where a data plane is; it does not create one. The collector and the engine reach it with
+            the credentials this deployment was started with, which belong to the demo data plane.{" "}
+            <button className="link" onClick={demo}>Fill in the demo data plane</button>
+          </p>
+        )}
+        {admin && (
+          <div className="row">
             <input placeholder="name" value={cluster.name} onChange={(e) => setCluster({ ...cluster, name: e.target.value })} style={{ width: 130 }} />
             <input placeholder="pooler host" value={cluster.pooler_host} onChange={(e) => setCluster({ ...cluster, pooler_host: e.target.value })} style={{ width: 150 }} />
             <input placeholder="primary host" value={cluster.primary_host} onChange={(e) => setCluster({ ...cluster, primary_host: e.target.value })} style={{ width: 150 }} />
             <input placeholder="database" value={cluster.database_name} onChange={(e) => setCluster({ ...cluster, database_name: e.target.value })} style={{ width: 110 }} />
-            <button className="primary" onClick={() => act(api("/clusters", { method: "POST", body: { ...cluster, primary_host: cluster.primary_host || null } }).then(() => window.location.reload()), "Cluster registered.")}>Register cluster</button>
+            <button className="primary" disabled={!cluster.name || !cluster.pooler_host} onClick={() => act(api("/clusters", { method: "POST", body: { ...cluster, primary_host: cluster.primary_host || null } }).then(() => window.location.assign("/app/tenants")), "Cluster registered.")}>Register cluster</button>
           </div>
         )}
       </Card>

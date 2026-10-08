@@ -1,0 +1,10 @@
+{
+  "description": "Demo workload: the four tenants at half the evaluation rates, light enough to leave running on a laptop while the console is shown.",
+  "tenants": [
+    {"role": "t_steady",   "streams": [{"class": "OLTP", "rate": 10}]},
+    {"role": "t_bursty",   "streams": [{"class": "OLTP", "rate": 4,
+                                        "burst": {"every_s": 60, "duration_s": 15, "multiplier": 6}}]},
+    {"role": "t_analytic", "streams": [{"class": "OLAP", "rate": 0.75}]},
+    {"role": "t_mixed",    "streams": [{"class": "OLTP", "rate": 5}, {"class": "OLAP", "rate": 0.4}]}
+  ]
+}

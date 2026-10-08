@@ -1,4 +1,6 @@
 import re
+import time
+from collections import deque
 from datetime import timedelta
 from uuid import UUID
 
@@ -62,6 +64,19 @@ class SwitchOrgIn(BaseModel):
     org_slug: str
 
 
+# Failed sign-ins per email address, to slow down password guessing. Kept in this process:
+# enough for one API instance; several instances would need a shared store.
+LOGIN_MAX_FAILURES, LOGIN_WINDOW_S = 8, 300
+_failures: dict[str, deque[float]] = {}
+
+
+def _recent_failures(email: str) -> deque[float]:
+    recent = _failures.setdefault(email.lower(), deque())
+    while recent and time.monotonic() - recent[0] > LOGIN_WINDOW_S:
+        recent.popleft()
+    return recent
+
+
 def slugify(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40].strip("-")
 
@@ -84,8 +99,16 @@ def _pick_org(orgs: list[OrgOut], slug: str | None) -> OrgOut:
     raise HTTPException(status.HTTP_403_FORBIDDEN, "not a member of that organization")
 
 
+@router.get("/config")
+async def public_config():
+    """What the sign-in pages need to know before anyone is signed in."""
+    return {"signup_enabled": get_settings().signup_enabled, "mail_delivery": mailer.configured()}
+
+
 @router.post("/signup", response_model=TokenOut, status_code=status.HTTP_201_CREATED)
 async def signup(body: SignupIn):
+    if not get_settings().signup_enabled:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "creating organizations is switched off on this deployment")
     slug = slugify(body.org_name)
     if len(slug) < 2:
         raise HTTPException(422, "organization name needs letters or digits")
@@ -102,12 +125,18 @@ async def signup(body: SignupIn):
 
 @router.post("/login", response_model=TokenOut)
 async def login(body: LoginIn):
+    recent = _recent_failures(body.email)
+    if len(recent) >= LOGIN_MAX_FAILURES:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                            "too many failed sign-in attempts for this address; try again in a few minutes")
     async with system_tx() as conn:
         cur = await conn.execute("SELECT * FROM cp.auth_get_user(%s)", (body.email,))
         user = await cur.fetchone()
         password_ok = verify_password(user["o_password_hash"] if user else None, body.password)
         if not user or not password_ok or not user["o_is_active"]:
+            recent.append(time.monotonic())
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "incorrect email or password")
+        _failures.pop(body.email.lower(), None)
         orgs = await _memberships(conn, user["o_user_id"])
     org = _pick_org(orgs, body.org_slug)
 
@@ -163,6 +192,7 @@ class MeOut(BaseModel):
     email: str
     full_name: str
     org: OrgOut
+    orgs: list[OrgOut]
 
 
 @router.get("/me", response_model=MeOut)
@@ -176,7 +206,9 @@ async def me(principal: Principal = Depends(get_principal)):
             """
         )
         row = await cur.fetchone()
+        orgs = await _memberships(conn, principal.user_id)
     return MeOut(
+        orgs=orgs,
         user_id=principal.user_id,
         email=row["email"],
         full_name=row["full_name"],

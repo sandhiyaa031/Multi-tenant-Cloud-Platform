@@ -1,13 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Navigate, NavLink, Outlet, Route, Routes, useNavigate } from "react-router-dom";
-import { api, getToken, setToken, useApi, type Cluster, type Org, type Session, type Tenant } from "./api";
-import { tenantColors } from "./ui";
+import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { api, can, getToken, setToken, useApi, type Cluster, type Org, type Session, type Tenant } from "./api";
+import { Badge, ErrorBoundary, tenantColors } from "./ui";
 import { Architecture, Forgot, Landing, Login, Product, Reset, Signup } from "./pages/Public";
 import { Health, Overview, Queries, Tenants, Workloads } from "./pages/Observe";
 import { AgentConsole, Canaries, Experiments, ProposalPage, Recommendations, TwinLab, Verification } from "./pages/Optimise";
 import { Audit, Settings } from "./pages/Admin";
 
-interface Me { user_id: string; email: string; full_name: string; org: Org }
+interface Me { user_id: string; email: string; full_name: string; org: Org; orgs: Org[] }
 interface AuthCtx { me: Me | null; ready: boolean; signIn: (s: Session) => void; signOut: () => void; refresh: () => void }
 const Auth = createContext<AuthCtx>(null!);
 export const useAuth = () => useContext(Auth);
@@ -44,9 +44,24 @@ const NAV: [string, [string, string][]][] = [
   ["Organization", [["settings", "Settings"]]],
 ];
 
+// Whether the collector is still writing snapshots of this cluster. It records the instance
+// counters every interval whether or not any tenant is sending traffic.
+function CollectorStatus({ cluster }: { cluster: Cluster }) {
+  const instance = useApi<any[]>(`/clusters/${cluster.id}/instance?minutes=15`, 15000);
+  if (!cluster.primary_host) return <Badge tone="">not observed</Badge>;
+  if (instance.error) return <Badge tone="critical">telemetry unavailable</Badge>;
+  if (!instance.data) return null;
+  const last = instance.data.at(-1);
+  if (!last) return <span title="The collector has written nothing for this cluster in the last 15 minutes."><Badge tone="critical">collector silent</Badge></span>;
+  const age = Math.max(0, (Date.now() - new Date(last.window_end).getTime()) / 1000);
+  const text = age < 90 ? `${age.toFixed(0)} s ago` : `${(age / 60).toFixed(0)} min ago`;
+  return <span title="Time since the collector's last snapshot of this cluster"><Badge tone={age < 180 ? "good" : "warning"}>{`collector ${text}`}</Badge></span>;
+}
+
 function Shell() {
-  const { me, ready, signOut } = useAuth();
+  const { me, ready, signIn, signOut } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const clusters = useApi<Cluster[]>(me ? "/clusters" : null);
   const [selected, setSelected] = useState<string | null>(localStorage.getItem("dbpilot.cluster"));
   const list = clusters.data ?? [];
@@ -60,8 +75,11 @@ function Shell() {
     reloadTenants: tenants.reload,
   }), [list, cluster, tenants.data, tenants.reload]);
 
-  if (!ready) return null;
-  if (!me) return <Navigate to="/login" replace />;
+  if (!ready) return <div className="page muted">Loading…</div>;
+  // Signed out, or the session ended: come back to this page after signing in again.
+  if (!me) return <Navigate to={`/login?next=${encodeURIComponent(location.pathname)}`} replace />;
+  const switchOrg = (slug: string) => api<Session>("/auth/switch-org", { method: "POST", body: { org_slug: slug } })
+    .then((s) => { signIn(s); localStorage.removeItem("dbpilot.cluster"); window.location.assign("/app"); });
   return (
     <ClusterContext.Provider value={ctx}>
       <div className="shell">
@@ -80,19 +98,25 @@ function Shell() {
           <header className="topbar">
             <div className="row">
               <span className="muted">Cluster</span>
-              {list.length === 0 ? <span className="muted">none registered</span> : (
-                <select value={cluster?.id ?? ""} onChange={(e) => ctx.select(e.target.value)}>
+              {clusters.error ? <span className="error">{clusters.error}</span> : list.length === 0 ? <span className="muted">none registered</span> : (
+                <select aria-label="Cluster" value={cluster?.id ?? ""} onChange={(e) => ctx.select(e.target.value)}>
                   {list.map((c) => <option key={c.id} value={c.id}>{c.name}{c.primary_host ? "" : " (not observed)"}</option>)}
                 </select>
               )}
+              {cluster && <CollectorStatus cluster={cluster} />}
             </div>
             <div className="who">
-              <span>{me.org.name}</span><span className="badge info"><span className="dot" />{me.org.role.toLowerCase()}</span>
+              {me.orgs.length > 1 ? (
+                <select aria-label="Organization" value={me.org.slug} onChange={(e) => switchOrg(e.target.value)}>
+                  {me.orgs.map((o) => <option key={o.id} value={o.slug}>{o.name}</option>)}
+                </select>
+              ) : <span>{me.org.name}</span>}
+              <span className="badge info"><span className="dot" />{me.org.role.toLowerCase()}</span>
               <span className="muted">{me.email}</span>
               <button onClick={() => { signOut(); navigate("/"); }}>Sign out</button>
             </div>
           </header>
-          <main className="page"><Outlet /></main>
+          <main className="page"><ErrorBoundary key={location.pathname}><Outlet /></ErrorBoundary></main>
         </div>
       </div>
     </ClusterContext.Provider>
@@ -102,7 +126,13 @@ function Shell() {
 // Pages that only make sense for one cluster render this when there is none.
 export function NeedCluster({ children }: { children: (cluster: Cluster) => ReactNode }) {
   const { cluster } = useCluster();
-  if (!cluster) return <div className="empty">No cluster is registered for this organization yet. An admin can add one under Settings.</div>;
+  const { me } = useAuth();
+  if (!cluster) return (
+    <div className="empty">
+      No cluster is registered for this organization yet.{" "}
+      {can(me?.org.role, "ADMIN") ? <>Register one under <Link to="/app/settings">Settings</Link>.</> : "An admin can register one under Settings."}
+    </div>
+  );
   return <>{children(cluster)}</>;
 }
 
@@ -133,6 +163,7 @@ export default function App() {
           <Route path="experiments" element={<Experiments />} />
           <Route path="audit" element={<Audit />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="*" element={<div className="empty">There is no such page. <Link to="/app/overview">Go to the overview</Link>.</div>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

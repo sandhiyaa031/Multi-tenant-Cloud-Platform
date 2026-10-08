@@ -226,3 +226,8 @@ results/*/diagnostic*.txt
 
 # Workload driver output
 results/
+
+# Browser test output
+web/e2e/node_modules/
+web/e2e/test-results/
+web/e2e/package-lock.json

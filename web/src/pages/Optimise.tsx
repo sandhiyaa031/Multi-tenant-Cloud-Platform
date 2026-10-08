@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, can, describeAction, fmt, useApi, type Cluster, type Proposal, type ProposalDetail } from "../api";
 import { NeedCluster, useAuth, useCluster } from "../App";
-import { Badge, Card, EffectsPlot, KeyValue, Load, PageHead, Stat } from "../ui";
+import { Badge, Card, EffectsPlot, KeyValue, Load, PageHead, Stat, Stepper, type Tone } from "../ui";
 
 const POLL = 8000;
 const IN_FLIGHT = ["PROPOSED", "VERIFYING", "APPROVED", "CANARY", "ROLLBACK_REQUESTED"];
@@ -57,8 +57,8 @@ function AgentFor({ cluster }: { cluster: Cluster }) {
       <Card title="Run a diagnosis">
         {!operator ? <div className="notice">Running a diagnosis needs the operator role.</div> : (
           <>
-            <div className="field"><label>Note to the agent (optional)</label>
-              <input value={hint} onChange={(e) => setHint(e.target.value)} placeholder="e.g. the analytics tenant reports slow item lookups" style={{ width: "100%" }} /></div>
+            <label className="field"><span>Note to the agent (optional)</span>
+              <input value={hint} onChange={(e) => setHint(e.target.value)} placeholder="e.g. the analytics tenant reports slow item lookups" style={{ width: "100%" }} /></label>
             <div className="row">
               <button className="primary" disabled={busy !== null} onClick={() => run("agent")}>{busy === "agent" ? "Agent is investigating…" : "Run LLM agent"}</button>
               <button disabled={busy !== null} onClick={() => run("rule")}>{busy === "rule" ? "Evaluating rules…" : "Run rule-based proposer"}</button>
@@ -129,7 +129,7 @@ function RecommendationsFor({ cluster }: { cluster: Cluster }) {
       <PageHead title="Recommendations" action={can(me?.org.role, "OPERATOR") && <button className="primary" onClick={() => setShow(!show)}>{show ? "Close" : "Propose an action"}</button>}>
         Every proposed change and where it stands. A proposal is only data until it passes verification; verified ones wait here for a decision.
       </PageHead>
-      {show && <ProposeForm cluster={cluster} onDone={() => { setShow(false); proposals.reload(); }} />}
+      {show && <ProposeForm cluster={cluster} />}
       <Card title="Waiting for a decision" sub="verified and awaiting approval, or inconclusive and escalated to a person">
         <Load of={proposals}>{() => <ProposalTable rows={waiting} empty="Nothing is waiting for a decision." />}</Load>
       </Card>
@@ -139,7 +139,8 @@ function RecommendationsFor({ cluster }: { cluster: Cluster }) {
   );
 }
 
-function ProposeForm({ cluster, onDone }: { cluster: Cluster; onDone: () => void }) {
+function ProposeForm({ cluster }: { cluster: Cluster }) {
+  const navigate = useNavigate();
   const [text, setText] = useState(JSON.stringify(Object.values(TEMPLATES)[0], null, 2));
   const [rationale, setRationale] = useState("");
   const [verification, setVerification] = useState("full");
@@ -149,37 +150,72 @@ function ProposeForm({ cluster, onDone }: { cluster: Cluster; onDone: () => void
   const submit = () => {
     let action: unknown;
     try { action = JSON.parse(text); } catch { setError("The action is not valid JSON."); return; }
-    api(`/clusters/${cluster.id}/proposals`, { method: "POST", body: { action, rationale, verification, gate_mode: gate, auto_approve: auto } })
-      .then(onDone).catch((e: Error) => setError(e.message));
+    api<Proposal>(`/clusters/${cluster.id}/proposals`, { method: "POST", body: { action, rationale, verification, gate_mode: gate, auto_approve: auto } })
+      .then((p) => navigate(`/app/recommendations/${p.id}`)).catch((e: Error) => setError(e.message));
   };
   return (
     <Card title="Propose an action" sub="must be one of the typed actions; anything else is refused by the API">
       <div className="grid cols-2">
         <div>
-          <div className="field"><label>Start from</label>
-            <select onChange={(e) => setText(JSON.stringify(TEMPLATES[e.target.value], null, 2))}>{Object.keys(TEMPLATES).map((k) => <option key={k}>{k}</option>)}</select></div>
-          <div className="field"><label>Action</label><textarea className="mono" rows={8} value={text} onChange={(e) => setText(e.target.value)} /></div>
+          <label className="field"><span>Start from</span>
+            <select onChange={(e) => setText(JSON.stringify(TEMPLATES[e.target.value], null, 2))}>{Object.keys(TEMPLATES).map((k) => <option key={k}>{k}</option>)}</select></label>
+          <label className="field"><span>Action</span><textarea className="mono" rows={8} value={text} onChange={(e) => setText(e.target.value)} /></label>
         </div>
         <div>
-          <div className="field"><label>Rationale</label><textarea rows={3} value={rationale} onChange={(e) => setRationale(e.target.value)} /></div>
-          <div className="field"><label>Verification</label>
+          <label className="field"><span>Rationale</span><textarea rows={3} value={rationale} onChange={(e) => setRationale(e.target.value)} /></label>
+          <label className="field"><span>Verification</span>
             <select value={verification} onChange={(e) => setVerification(e.target.value)}>
               <option value="full">Full: static rules, what-if, digital twin, canary</option>
               <option value="canary_only">Canary only (skips the twin)</option>
               <option value="none">None: apply and observe (for experiments)</option>
-            </select></div>
-          <div className="field"><label>Gate</label>
+            </select></label>
+          <label className="field"><span>Gate</span>
             <select value={gate} onChange={(e) => setGate(e.target.value)}>
               <option value="per_tenant">Per tenant: every tenant must be shown unharmed</option>
               <option value="aggregate">Aggregate: judge the workload as a whole (for comparison)</option>
-            </select></div>
+            </select></label>
           <label className="row"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Proceed to canary without waiting for approval if verification passes</label>
         </div>
       </div>
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
       <button className="primary" onClick={submit}>Submit for verification</button>
     </Card>
   );
+}
+
+// Where a proposal stands, what that means, and what happens next, in words a visitor can follow.
+const STAGES = ["Proposed", "Verification", "Decision", "Canary", "In production"];
+function lifecycle(d: ProposalDetail): { at: number; tone: Tone; label?: string; meaning: string; next: string } {
+  const inCanary = d.state_reason.startsWith("T3");
+  const inVerification = /^T[012]/.test(d.state_reason);
+  switch (d.state) {
+    case "PROPOSED": return { at: 0, tone: "info", meaning: "Queued. A proposal is only data: nothing has been run or changed.",
+      next: "The engine takes proposals one at a time and starts with the cheapest checks." };
+    case "VERIFYING": return { at: 1, tone: "info", label: "Verifying", meaning: "Being checked: static rules, then the planner, then replays on the digital twin.",
+      next: "A twin verdict rests on several replay pairs of about two minutes each, so this takes several minutes." };
+    case "ADVISORY": return { at: 1, tone: "", label: "Advisory", meaning: "This kind of action cannot be executed or measured automatically.",
+      next: "It is advice for a person; DBPilot will not apply it." };
+    case "AWAITING_APPROVAL": return { at: 2, tone: "warning", label: "Awaiting approval", meaning: "Verification passed: the target was shown to benefit and no tenant was shown or suspected to be harmed.",
+      next: "An operator approves it for a canary in production, or rejects it." };
+    case "INCONCLUSIVE": return { at: 2, tone: "warning", label: "Inconclusive", meaning: "Verification could neither show the change safe nor show it harmful, so it is treated as not safe and is not applied.",
+      next: "An admin may override and send it to a canary; an operator may reject it." };
+    case "REJECTED": return inVerification
+      ? { at: 1, tone: "serious", label: "Rejected in verification", meaning: "A verification tier refused the change. Production was never touched.", next: "Nothing further happens." }
+      : { at: 2, tone: "serious", label: "Rejected", meaning: "A member rejected the change. Production was never touched.", next: "Nothing further happens." };
+    case "APPROVED": return { at: 3, tone: "info", label: "Queued for canary", meaning: "Cleared to go to production under watch.",
+      next: "The engine applies it and starts the canary; one change is in canary per cluster at a time." };
+    case "CANARY": return { at: 3, tone: "info", label: "Canary running", meaning: "The change is live in production and each tenant's latency is being compared with its baseline.",
+      next: "If a tenant breaches its contract in two of three windows, or telemetry is lost, the change is undone automatically. Otherwise it is kept." };
+    case "APPLIED": return { at: 4, tone: "good", label: "Applied", meaning: d.verification === "none" ? "The change was applied and observed without enforcement." : "The canary held for every tenant and the change was kept.",
+      next: "It stays in production until an operator rolls it back with the stored inverse." };
+    case "ROLLBACK_REQUESTED": return { at: 4, tone: "warning", label: "Rolling back", meaning: "A member asked for the change to be undone.", next: "The engine runs the stored inverse." };
+    case "ROLLED_BACK": return inCanary
+      ? { at: 3, tone: "serious", label: "Rolled back by the canary", meaning: "The canary undid the change automatically.", next: "Production is back to how it was before the change." }
+      : { at: 4, tone: "serious", label: "Rolled back", meaning: "The change was undone with its stored inverse.", next: "Production is back to how it was before the change." };
+    case "FAILED": return { at: inCanary ? 3 : 1, tone: "critical", label: "Failed", meaning: "The machinery failed, not the change: see the reason below.",
+      next: "Nothing is left applied unless the reason says a rollback failed." };
+    default: return { at: 0, tone: "", meaning: "", next: "" };
+  }
 }
 
 export function ProposalPage() {
@@ -201,8 +237,14 @@ export function ProposalPage() {
             Proposed by {d.source} · {fmt.datetime(d.created_at)}
           </PageHead>
           <Card title="Status" action={<Badge>{d.state}</Badge>}>
-            <p className="secondary">{d.state_reason || "Queued for verification."}</p>
-            {d.state === "INCONCLUSIVE" && <p className="notice">Verification could not show this change is safe. It will not be applied unless an admin overrides.</p>}
+            {(() => { const l = lifecycle(d); return (
+              <>
+                <Stepper stages={STAGES} at={l.at} tone={l.tone} label={l.label} />
+                <p><strong>{l.meaning}</strong> <span className="secondary">{l.next}</span></p>
+              </>
+            ); })()}
+            {d.state_reason && <p className="secondary"><span className="muted">Reason recorded: </span>{d.state_reason}</p>}
+            {IN_FLIGHT.includes(d.state) && <p className="muted">This page refreshes by itself every 5 seconds.</p>}
             {(canApprove || canReject || (d.state === "APPLIED" && can(role, "OPERATOR"))) && (
               <div className="row">
                 <input placeholder="Reason (recorded in the audit log)" value={reason} onChange={(e) => setReason(e.target.value)} style={{ flex: 1, minWidth: 260 }} />
@@ -246,27 +288,42 @@ function Steps({ steps }: { steps: ProposalDetail["steps"] }) {
   );
 }
 
+// Values the pair-based gate can produce with two or three disagreeing pairs span many orders of magnitude.
+const bounded = (v: number) => (v >= 100 ? ">100" : v < 0.01 ? "<0.01" : v.toFixed(2));
+
 function TwinRun({ run }: { run: any }) {
   const v = run.verdict;
+  const pairs = v.looks ?? run.repetitions ?? 1;
+  // Which arm ran first in each pair. Verdicts stored before this was recorded do not have it.
+  const order = (n: string) => (v.treatment_first ? (v.treatment_first[n] ? " T→C" : " C→T") : "");
+  const perPair = (e: any) => Object.entries<number>(e.pair_ratios ?? {}).sort((a, b) => Number(a[0]) - Number(b[0]));
   return (
-    <Card title="Digital twin result" sub={`${run.transactions} captured transactions in ${v.looks ?? 1} window(s) of ${run.window_s.toFixed(0)} s, replayed ${run.repetitions}× per arm in total`} action={<Badge>{v.decision}</Badge>}>
+    <Card title="Digital twin result" sub={`${run.transactions} captured transactions, replayed in ${pairs} pair${pairs === 1 ? "" : "s"} of control and treatment over windows of ${run.window_s.toFixed(0)} s`} action={<Badge>{v.decision}</Badge>}>
       <div className="grid cols-4" style={{ marginBottom: 14 }}>
+        <Stat label="Replay pairs" value={pairs} hint="one pair decides nothing" />
         <Stat label="Replay errors" value={run.replay_errors} hint="across both arms" />
         <Stat label="Write volume" value={run.wal_ratio == null ? "–" : fmt.ratio(run.wal_ratio)} hint="WAL, treatment ÷ control" />
-        <Stat label="Storage added" value={fmt.bytes(run.storage_delta_bytes)} />
-        <Stat label="Time to apply" value={run.apply_seconds == null ? "–" : `${run.apply_seconds.toFixed(1)} s`} hint="on the clone" />
+        <Stat label="Storage added" value={fmt.bytes(run.storage_delta_bytes)} hint={run.apply_seconds == null ? undefined : `applied on the clone in ${run.apply_seconds.toFixed(1)} s`} />
       </div>
       {v.mode === "per_tenant" ? (
         <>
-          <h3>Effect per tenant: p95 latency, treatment ÷ control, with confidence interval</h3>
+          <h3>Effect per tenant: p95 latency, treatment ÷ control</h3>
+          <p className="secondary">
+            Each replay pair is one control and one treatment replay of the same captured window, run one after the other. The ratio is the
+            geometric mean over the pairs, and the interval comes from how much the pairs disagree, so a single pair gives no interval and a
+            few disagreeing pairs give a very wide one. Harm counts only if it was seen both with the treatment arm running first and with it running second.
+          </p>
           <EffectsPlot effects={v.effects} />
           <div className="table-wrap" style={{ marginTop: 10 }}><table>
-            <thead><tr><th>Tenant / class</th><th>Finding</th><th className="num">Control p95</th><th className="num">Treatment p95</th><th className="num">Ratio</th><th className="num">Interval</th><th className="num">Samples</th></tr></thead>
+            <thead><tr><th>Tenant / class</th><th>Finding</th><th className="num">Control p95</th><th className="num">Treatment p95</th><th className="num">Ratio</th><th className="num">Interval</th><th>Ratio in each pair</th><th className="num">Samples</th></tr></thead>
             <tbody>{Object.entries<any>(v.effects).sort().map(([k, e]) => (
               <tr key={k}><td>{k}</td><td><Badge>{e.status}</Badge></td><td className="num">{fmt.ms(e.control)}</td><td className="num">{fmt.ms(e.treatment)}</td>
-                <td className="num">{fmt.ratio(e.ratio)}</td><td className="num">{e.lo == null ? "–" : `${e.lo.toFixed(2)} – ${e.hi.toFixed(2)}`}</td><td className="num">{e.n_control} / {e.n_treatment}</td></tr>
+                <td className="num">{e.ratio == null ? "–" : `${bounded(e.ratio)}×`}</td><td className="num">{e.lo == null ? "–" : `${bounded(e.lo)} – ${bounded(e.hi)}`}</td>
+                <td className="pairs">{perPair(e).length === 0 ? "–" : perPair(e).map(([n, r]) => `${bounded(r)}${order(n)}`).join(" · ")}</td>
+                <td className="num">{e.n_control} / {e.n_treatment}</td></tr>
             ))}</tbody>
           </table></div>
+          {v.treatment_first && <p className="muted" style={{ marginTop: 6 }}>T→C: the treatment arm ran first in that pair. C→T: the control arm ran first.</p>}
         </>
       ) : <p className="notice">Judged with the aggregate gate: only the workload as a whole was compared, so per-tenant effects were not examined.</p>}
       <h3 style={{ marginTop: 14 }}>Reasons</h3>
@@ -294,6 +351,7 @@ function CanaryView({ canary }: { canary: any }) {
   return (
     <Card title="Canary" sub="production latency against the contract, per collector window" action={canary.outcome ? <Badge>{canary.outcome}</Badge> : <Badge>CANARY</Badge>}>
       {canary.outcome_reason && <p className="secondary">{canary.outcome_reason}</p>}
+      {!canary.outcome && <p className="notice" role="status">Watching production: {canary.observations.length} window{canary.observations.length === 1 ? "" : "s"} judged so far. A ratio above the contract in two of three windows undoes the change.</p>}
       <div className="table-wrap"><table>
         <thead><tr><th>Tenant / class</th><th className="num">Baseline p95</th><th className="num">Contract</th>{canary.observations.map((o: any, i: number) => <th className="num" key={i} title={o.stage_label}>{staged ? `Stage ${o.stage ?? 1} · ` : ""}Window {i + 1}</th>)}<th className="num">Result</th></tr></thead>
         <tbody>{keys.map((k) => (

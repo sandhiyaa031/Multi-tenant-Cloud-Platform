@@ -298,6 +298,8 @@ class Engine:
             pooled["treatment_arm"] = treatment
             verdict, detail = self.judge(db, proposal, cluster, action, pooled)
             detail["looks"] = look
+            # Which arm ran first in each replay pair, for whoever reads the verdict.
+            detail["treatment_first"] = {str(k): v for k, v in pooled["treatment_first"].items()}
             if verdict.decision != "INCONCLUSIVE":
                 break
             log.info("proposal %s inconclusive after replay %d of %d", proposal["id"], look, self.c.twin_max_looks)

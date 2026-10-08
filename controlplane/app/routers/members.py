@@ -7,6 +7,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from app import mailer
 from app.config import get_settings
+from app.db import system_tx
 from app.deps import Principal, require_role
 from app.security import new_one_time_token
 
@@ -60,14 +61,49 @@ async def invite_member(body: InviteIn, principal: Principal = Depends(require_r
             (body.email, body.full_name, body.role, token_hash, timedelta(hours=settings.invite_token_ttl_hours)),
         )
         row = await cur.fetchone()
+    link = None
     if row["o_needs_password"]:
+        link = f"{settings.public_web_url}/reset-password?token={token}"
         mailer.send(
             body.email,
             "You have been invited to DBPilot",
-            f"Set your password: {settings.public_web_url}/reset-password?token={token}\n"
-            f"This link expires in {settings.invite_token_ttl_hours} hours.",
+            f"Set your password: {link}\nThis link expires in {settings.invite_token_ttl_hours} hours.",
         )
-    return {"user_id": row["o_user_id"], "role": body.role}
+    # Without a mail server nothing was delivered: the admin who invited gets the link to pass on.
+    return {"user_id": row["o_user_id"], "role": body.role, "needs_password": row["o_needs_password"],
+            "delivered": mailer.configured(), "link": None if mailer.configured() else link}
+
+
+@router.post("/{user_id}/password-link")
+async def password_link(user_id: UUID, principal: Principal = Depends(require_role("ADMIN"))):
+    """A single-use link with which a member sets a new password, for deployments without a mail
+    server, where "forgot password" cannot reach anyone. Refused when mail works (the member can
+    ask for a link themselves) and for an account that also belongs to another organization (an
+    admin here must not be able to take over an account other organizations rely on)."""
+    settings = get_settings()
+    if mailer.configured():
+        raise HTTPException(status.HTTP_409_CONFLICT, "mail delivery is configured; the member can use 'Forgot password'")
+    token, token_hash = new_one_time_token()
+    async with principal.tx() as conn:
+        cur = await conn.execute(
+            "SELECT u.email FROM cp.memberships m JOIN cp.users u ON u.id = m.user_id"
+            " WHERE m.org_id = cp.current_org() AND m.user_id = %s", (user_id,))
+        member = await cur.fetchone()
+        if member is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "member not found")
+        cur = await conn.execute("SELECT count(*) AS n FROM cp.auth_memberships(%s)", (user_id,))
+        if (await cur.fetchone())["n"] > 1:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                "this account also belongs to another organization; a link cannot be issued here")
+        await conn.execute("SELECT cp.audit('members.password_link', 'users', %s, '{}'::jsonb)", (str(user_id),))
+    async with system_tx() as conn:
+        cur = await conn.execute(
+            "SELECT cp.create_reset_token(%s, %s, %s) AS created",
+            (member["email"], token_hash, timedelta(minutes=settings.reset_token_ttl_minutes)))
+        if not (await cur.fetchone())["created"]:
+            raise HTTPException(status.HTTP_409_CONFLICT, "this account is not active")
+    return {"link": f"{settings.public_web_url}/reset-password?token={token}",
+            "expires_minutes": settings.reset_token_ttl_minutes}
 
 
 @router.patch("/{user_id}")

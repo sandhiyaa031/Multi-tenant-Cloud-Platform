@@ -7,6 +7,7 @@ production is not involved. It is cheap and sometimes wrong, which is why the
 twin replay (T2) follows it.
 """
 import json
+import re
 import time
 
 import psycopg
@@ -52,17 +53,28 @@ def index_whatif(action_data: dict, queries: list[str]) -> dict:
             time.sleep(1 + attempt)
 
 
+def _as_tenant(action: actions.CreateIndex, query: str) -> str:
+    """The statement as the target tenant runs it. Tenants name the shared table and reach only
+    their own partition; this session is not a tenant, so the same text would be planned across
+    every tenant's partition, and an index on one of them could then never cut more than that
+    partition's share of the cost, however much it helps the tenant it is for."""
+    if action.tenant_role is None or action.table not in actions.PARTITIONED:
+        return query
+    return re.sub(rf"\bch\.{action.table}\b", f"ch.{action.table}_{action.tenant_role}", query)
+
+
 def _index_whatif(action: actions.CreateIndex, queries: list[str]) -> dict:
     with pg.connect(pg.SOURCE_PORT) as conn:
         plan = actions.plan(action, conn)
-        before = {q: _cost(conn, q) for q in queries}
+        planned = {q: _as_tenant(action, q) for q in queries}
+        before = {q: _cost(conn, planned[q]) for q in queries}
         conn.execute("SELECT hypopg_reset()")
         for statement in plan.apply:
             # The executor's own statement, minus the keywords HypoPG does not parse.
             ddl = statement.replace("CONCURRENTLY IF NOT EXISTS ", "").split(" ON ", 1)
             conn.execute("SELECT hypopg_create_index(%s)", (f"CREATE INDEX ON {ddl[1]}",))
         size = conn.execute("SELECT coalesce(sum(hypopg_relation_size(indexrelid)), 0) FROM hypopg_list_indexes").fetchone()[0]
-        after = {q: _cost(conn, q) for q in queries}
+        after = {q: _cost(conn, planned[q]) for q in queries}
         conn.execute("SELECT hypopg_reset()")
 
     results = []

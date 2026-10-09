@@ -404,6 +404,7 @@ services:
   # Browser tests of the demo path, against the running stack with demo-load started.
   #   docker compose run --rm e2e                                      sign-in, pages, canary, rollback (2 min)
   #   docker compose run --rm e2e npx playwright test twin.spec.ts     the same through the digital twin (15 min)
+  #   docker compose run --rm e2e npx playwright test rollback.spec.ts automatic rollback by the canary (3 min)
   e2e:
     image: mcr.microsoft.com/playwright:v1.48.0-jammy
     profiles: ["test"]

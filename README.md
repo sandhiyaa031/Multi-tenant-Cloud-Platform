@@ -639,19 +639,58 @@ At `SEED_SCALE` below 1.0 the data no longer has the TPC-C population per
 district; measurements taken with it must say so. Changing the seed variables
 after the first start has no effect until the data-plane volumes are recreated.
 
-Generate load:
+### Walking through the demo
 
 ```bash
-docker compose run --rm workload --profile profiles/eval.json --duration 900
+docker compose --profile demo up -d demo-load     # the four tenants send light traffic until stopped
+docker compose --profile demo stop demo-load
 ```
 
 Open http://localhost:5173 and sign in with `DEMO_ADMIN_EMAIL` /
-`DEMO_ADMIN_PASSWORD` from `.env`. After a couple of collector windows the
-Overview, Workloads and Query Intelligence pages fill in. Under
-Recommendations, propose an action and follow it through verification.
+`DEMO_ADMIN_PASSWORD` from `.env`. The top bar shows how long ago the collector
+last reported; after two collector windows the Overview, Workloads and Query
+Intelligence pages fill in. Without the demo workload the charts are empty and
+the Overview says so.
+
+The demo workload has the analytical tenant look items up in `order_line`, which
+has no index on the item. From there:
+
+1. **Agent Console → Run rule-based proposer** queues what its rules find, the
+   missing index among them (or propose it by hand under Recommendations, from
+   the "Index for one tenant" template).
+2. The proposal's page shows where it is: static rules, planner what-if, then the
+   digital twin, which replays several pairs of about two minutes each.
+3. The twin result shows each tenant's ratio with its interval and the ratio in
+   every replay pair. On one laptop, where the planes share a machine, the
+   neighbours' intervals are too wide to show them safe, so the verdict is
+   usually **inconclusive**: the change is not applied.
+4. An operator rejects it, or an admin overrides and sends it to a canary. The
+   canary applies it to production, watches every tenant against the contract,
+   and keeps it or undoes it.
+5. **Roll back** undoes an applied change with its stored inverse. Experiments and
+   Audit History show what was predicted, what happened and who decided.
+
+For heavier load, `docker compose run --rm workload --profile profiles/eval.json --duration 900`.
 
 To use the LLM agent, set `ANTHROPIC_API_KEY` in `.env`. Without it the
 rule-based proposer still works.
+
+### Accounts on a demo deployment
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SIGNUP_ENABLED` | `true` | `false` closes sign-up; people join by invitation only |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | unset | With `SMTP_HOST` set, invitations and password resets are emailed |
+
+Without a mail server nothing is sent, and the console says so instead of
+pretending: an admin who invites someone is shown the single-use link to pass on,
+"Forgot password" tells the user to ask an admin, and an admin can create a
+password link for a member under Settings. A new organization starts empty; the
+collector and the engine reach a data plane with the credentials the deployment
+was started with, so on this stack the only data plane an organization can
+register is the demo one (Settings and Tenants have buttons that fill it in).
+Sign-in is rate limited per address in the API process. Signing out discards the
+token in the browser; the token itself stays valid until it expires (8 hours).
 
 | Service | Address |
 |---|---|
@@ -691,21 +730,29 @@ docker compose run --rm --no-deps api python -m pytest -q                       
 docker compose run --rm dp-test                                                 # data plane
 docker compose run --rm --entrypoint python workload -m pytest -q tests         # workload driver
 docker compose run --rm twin-test                                               # twin node agent
+docker compose run --rm e2e                                                     # browser: sign-in, pages, canary, rollback
+docker compose run --rm e2e npx playwright test twin.spec.ts                    # browser: the loop through the digital twin
+docker compose run --rm e2e npx playwright test rollback.spec.ts                # browser: automatic rollback by the canary
 ```
+
+The browser tests drive the running stack with the demo workload started.
 
 | Suite | Tests | Examples of what is proven |
 |---|---|---|
-| Control plane and core | 163 | A VIEWER cannot write even with raw SQL; organizations cannot see each other; the audit log cannot be altered; no path takes a proposal to production without verification; the gate rejects a change that helps its target and harms a neighbour, and the aggregate gate approves the same change; the agent's out-of-space output is bounced back, not executed; an uncertain twin verdict buys more replays and is never applied; a failed twin run is never an approval; an agent proposal cannot be approved before verification |
+| Control plane and core | 172 | A VIEWER cannot write even with raw SQL; organizations cannot see each other; the audit log cannot be altered; no path takes a proposal to production without verification; the gate rejects a change that helps its target and harms a neighbour, and the aggregate gate approves the same change; the agent's out-of-space output is bounced back, not executed; an uncertain twin verdict buys more replays and is never applied; a failed twin run is never an approval; an agent proposal cannot be approved before verification |
 | Data plane | 36 | A tenant sees only its warehouses and cannot reach another tenant's partition; partitions are pruned under row-level security; an index can be built for one tenant; the replica follows and is read-only; the pooler refuses non-tenant roles; the executor role can apply and undo every executable action and is refused everything outside the action space |
 | Workload driver | 20 | Each transaction and query runs correctly as a tenant; New-Order keeps orders and order lines consistent; the open-loop generator hits its target rate; the report counts only what the trials contain |
-| Twin node agent | 46 | A clone is a standalone database at exactly the frozen moment; what is done on a clone reaches neither production nor the source; every arm starts from the same state; replay runs each transaction as its tenant at its original offset; a run that fails leaves the source following production |
+| Twin node agent | 47 | A clone is a standalone database at exactly the frozen moment; what is done on a clone reaches neither production nor the source; every arm starts from the same state; replay runs each transaction as its tenant at its original offset; a run that fails leaves the source following production |
 
 The twin tests build a miniature production inside their own container and
 never touch the running stack. The engine's verification path is tested with
 the twin replaced by a stand-in that returns measurements with a known effect.
-What automated tests do not cover: the canary's live path (applying to
-production, watching, rolling back), the web console, and the LLM agent against
-the live model API. The first two have been exercised by running the system.
+The browser tests cover the web console and the live path that the other
+suites replace with stand-ins: a change applied to production under a canary,
+kept, and rolled back on request; the same after the digital twin and a person's
+decision; and a harmful change (dropping an index a tenant depends on) undone by
+the canary without anyone asking. What automated tests do not cover: the LLM
+agent against the live model API.
 
 ## 19. Repository layout
 
@@ -745,16 +792,36 @@ docker-compose.yml
 | Workload driver | Implemented, tested |
 | Telemetry: query statistics, instance counters, latency percentiles | Implemented, tested |
 | Typed action space and executor | Implemented, tested |
-| Safety gate (per-tenant and aggregate) | Implemented, tested on synthetic data with known effects |
+| Safety gate (per-tenant and aggregate) | Implemented, tested on synthetic data with known effects. Judges replay pairs. On one laptop its intervals are too wide to reach a verdict (see below) |
 | Digital twin: delayed standby, clones, replay, what-if | Implemented, tested on a miniature data plane, run end to end on the development stack. Not tested at production size or under heavy load |
-| Verification engine and proposal state machine | Implemented; state machine, decision logic and the twin verification path tested, live path run end to end |
-| Canary controller and rollback | Implemented; decision logic tested, live path run in pilot trials |
+| Verification engine and proposal state machine | Implemented; state machine, decision logic and the twin verification path tested. The whole loop (proposal, twin, decision, canary, apply, rollback) runs end to end in a browser test, with an inconclusive twin verdict and an admin's override; a twin approval has not yet occurred on real measurements |
+| Canary controller and rollback | Implemented; decision logic tested; holding, rollback on request and automatic rollback run live in browser tests. It measures latency inside the database, so harm that is only queueing at the pooler (a concurrency cap) is invisible to it |
 | Rule-based proposer | Implemented, tested |
 | LLM agent | Implemented; the loop and its path through the API tested against a scripted model. Not run against the live API (no key available) |
-| Web console | Implemented; every page checked in a browser against live data |
+| Web console | Implemented; sign-in, session handling, every page and the change lifecycle covered by browser tests |
 | Scenario suite and evaluation harness | Implemented; single pilot trials only |
 | Kubernetes manifests | Written; not deployed |
-| Experimental evaluation | Not done. No results are claimed |
+| Experimental evaluation | Not done. No results are claimed. Diagnostics so far are in [docs/evidence](docs/evidence/README.md) |
+
+### What the diagnostics since have shown
+
+Raw outputs and protocols are in [docs/evidence](docs/evidence/README.md). None of
+this is an evaluation result.
+
+- **No scenario has yet harmed a neighbour at class-level p95.** The parallelism
+  scenarios changed nothing for tenants: the row-security helper functions are
+  marked parallel-unsafe, so tenant queries never run in parallel. The index for
+  all tenants did not measurably slow the writers.
+- **The first gate was not trustworthy.** With identical arms it called harm in 2
+  of 9 verdicts, because its interval saw only the scatter of requests inside a
+  replay and not that two arms run one after the other differ by themselves. The
+  gate now judges replay pairs, and on the same data makes no false call.
+- **On one laptop the gate cannot decide.** Identical arms differ by 5–12% from
+  pair to pair, so showing a tenant safe at a 5% margin would need tens of pairs.
+  Whether a machine with separate, steady cores brings that down is the next
+  thing to measure; it has not been measured.
+- **The development laptop is not a controlled environment**: its speed varies by
+  5–24% under sustained load, following CPU frequency.
 
 ### Pilot observations (not results)
 
@@ -775,16 +842,15 @@ that the pipeline runs; they do not support any claim about how well it works.
 
 What these do and do not show:
 
-- In both verified trials the change was kept out of production. In neither did
-  the gate reach a firm APPROVE or REJECT: with this replay window the
-  intervals are too wide to demonstrate non-inferiority for every tenant.
-  Whether the 15-minute window in the design narrows them enough is an open
-  question for the evaluation.
-- The twin did not reproduce the size of the slowdown seen in production for
-  the parallelism trap (about 1.05× against about 1.3×). The production figure
-  is a before/after comparison with no concurrent control, so part of it may be
-  drift on the machine; equally, the twin may under-predict. One trial cannot
-  tell these apart.
+- These trials used the first gate, since replaced (see above); their intervals
+  understate the uncertainty.
+- In the three twin-verified trials the change was kept out of production, and in
+  none did the gate reach a firm APPROVE or REJECT.
+- The 1.27×–1.59× slowdown measured for the parallelism trap was not an effect
+  of the change: that setting does not reach tenant queries (see above), and the
+  figure is a before/after comparison with no control. It was drift on the
+  machine. The twin's 1.03×–1.12× for the same change is noise for the same
+  reason.
 - Replay errors were 4 of 2,948 transactions and 0 of 2,928.
 - In the index trap the harm the scenario was designed to test did not appear:
   with no verification the change was measured in production and no tenant was

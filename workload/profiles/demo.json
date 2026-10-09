@@ -1,10 +1,10 @@
 {
-  "description": "Demo workload: the four tenants at half the evaluation rates, light enough to leave running on a laptop while the console is shown.",
+  "description": "Demo workload: the four tenants at half the evaluation rates, light enough to leave running on a laptop while the console is shown. The analytical tenant runs item lookups, which scan its whole order_line partition because there is no index on the item: the problem the demo's missing-index proposal is about.",
   "tenants": [
     {"role": "t_steady",   "streams": [{"class": "OLTP", "rate": 10}]},
     {"role": "t_bursty",   "streams": [{"class": "OLTP", "rate": 4,
                                         "burst": {"every_s": 60, "duration_s": 15, "multiplier": 6}}]},
-    {"role": "t_analytic", "streams": [{"class": "OLAP", "rate": 0.75}]},
+    {"role": "t_analytic", "streams": [{"class": "OLAP", "rate": 1.0, "only": ["item_sales"]}]},
     {"role": "t_mixed",    "streams": [{"class": "OLTP", "rate": 5}, {"class": "OLAP", "rate": 0.4}]}
   ]
 }

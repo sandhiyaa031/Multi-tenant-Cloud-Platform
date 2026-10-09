@@ -29,6 +29,10 @@ test("a twin-verified proposal shows its pair-based verdict and can be decided, 
   await expect(page.getByText("T0 · Static rules")).toBeVisible();
   await expect(page.getByText("T2 · Digital twin")).toBeVisible();
 
+  // Keep what the page looked like with this verdict, for whoever reviews the run.
+  await test.info().attach("twin verdict page", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
+  await page.screenshot({ path: "test-results/twin-verdict.png", fullPage: true });
+
   const state = (await current.textContent()) ?? "";
   test.info().annotations.push({ type: "twin verdict", description: state });
   if (state.includes("Rejected")) return; // refused in verification: production is never touched

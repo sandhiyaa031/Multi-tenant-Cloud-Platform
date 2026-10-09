@@ -146,14 +146,18 @@ const EFFECT_TONE: Record<string, string> = { BENEFITS: "var(--good)", SAFE: "va
 // replay pairs an interval can span orders of magnitude, and it is then drawn running off the edge
 // rather than squeezing every other row into a sliver. A key measured in a single pair has no
 // interval at all and is drawn as a hollow point.
-export function EffectsPlot({ effects, benefitLimit = 0.9, harmLimit = 1.05 }: { effects: Record<string, any>; benefitLimit?: number; harmLimit?: number }) {
+export function EffectsPlot({ effects, target, benefitLimit = 0.9, harmLimit = 1.05 }: { effects: Record<string, any>; target?: string | null; benefitLimit?: number; harmLimit?: number }) {
   const [hover, setHover] = useState<string | null>(null);
   const keys = Object.keys(effects).filter((k) => effects[k].ratio != null).sort();
   if (keys.length === 0) return <div className="empty">The twin run produced no comparable measurements.</div>;
+  // The axis always reaches every measured ratio, so a point is never drawn somewhere it is not.
+  // Interval ends stretch it too, but only within MIN..MAX; beyond that they run off the edge.
   const MIN = 0.2, MAX = 5;
-  const shown = keys.flatMap((k) => [effects[k].ratio, effects[k].lo, effects[k].hi]).filter((v) => v != null && v > 0) as number[];
-  const lo = Math.max(MIN, Math.min(0.5, ...shown) / 1.08);
-  const hi = Math.min(MAX, Math.max(1.5, ...shown) * 1.08);
+  const ratios = keys.map((k) => effects[k].ratio as number).filter((v) => v > 0);
+  const ends = keys.flatMap((k) => [effects[k].lo, effects[k].hi]).filter((v) => v != null && v > 0) as number[];
+  const lo = Math.max(0.001, Math.min(0.5, ...ratios.map((v) => v / 1.5), ...ends.map((v) => Math.max(MIN, v / 1.08))));
+  const hi = Math.min(1000, Math.max(1.5, ...ratios.map((v) => v * 1.5), ...ends.map((v) => Math.min(MAX, v * 1.08))));
+  const ticks = [0.001, 0.01, 0.1, 0.2, 0.5, 2, 5, 10, 100, 1000].filter((v) => v > lo * 1.15 && v < hi / 1.15);
   const W = 680, left = 150, right = 170, rowH = 30, top = 26;
   const clamp = (v: number) => Math.min(hi, Math.max(lo, v));
   const x = (v: number) => left + ((Math.log(clamp(v)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo))) * (W - left - right);
@@ -169,13 +173,19 @@ export function EffectsPlot({ effects, benefitLimit = 0.9, harmLimit = 1.05 }: {
           <line key={v} x1={x(v)} x2={x(v)} y1={top - 6} y2={H - 22} className="axis" strokeDasharray={v === 1 ? "" : "4 4"} />
         ))}
         <text x={x(1)} y={12} textAnchor="middle" style={{ fill: "var(--text-muted)", fontSize: 11 }}>1.0×</text>
+        {ticks.map((v) => (
+          <g key={v}>
+            <line x1={x(v)} x2={x(v)} y1={top - 6} y2={top - 1} className="axis" />
+            <text x={x(v)} y={12} textAnchor="middle" style={{ fill: "var(--text-muted)", fontSize: 11 }}>{v}×</text>
+          </g>
+        ))}
         {keys.map((k, i) => {
           const e = effects[k]; const y = top + i * rowH + rowH / 2; const color = EFFECT_TONE[e.status] ?? "var(--text-secondary)";
           const has = e.lo != null && e.hi != null;
           return (
             <g key={k} onMouseEnter={() => setHover(k)} onMouseLeave={() => setHover(null)}>
               <rect x={0} y={y - rowH / 2} width={W} height={rowH} fill={hover === k ? "var(--surface-2)" : "transparent"} />
-              <text x={8} y={y + 4}>{k}</text>
+              <text x={8} y={y + 4}>{k}{target && k.startsWith(target + "/") ? " ◂ target" : ""}</text>
               {has && <line x1={x(e.lo)} x2={x(e.hi)} y1={y} y2={y} stroke={color} strokeWidth={2} strokeLinecap="round" />}
               {has && e.lo < lo && <path d={`M${x(lo) + 7},${y - 5} L${x(lo)},${y} L${x(lo) + 7},${y + 5}`} fill="none" stroke={color} strokeWidth={2} />}
               {has && e.hi > hi && <path d={`M${x(hi) - 7},${y - 5} L${x(hi)},${y} L${x(hi) - 7},${y + 5}`} fill="none" stroke={color} strokeWidth={2} />}
@@ -190,7 +200,7 @@ export function EffectsPlot({ effects, benefitLimit = 0.9, harmLimit = 1.05 }: {
         <text x={W - right} y={H - 6} textAnchor="end" style={{ fill: "var(--text-muted)", fontSize: 11 }}>slower →</text>
       </svg>
       <div className="muted" style={{ fontSize: 12.5 }}>
-        Solid line: no change. Dashed left: the target must be entirely left of {benefitLimit.toFixed(2)}× to count as a benefit.
+        The scale is logarithmic. Solid line: no change. Dashed left: the target must be entirely left of {benefitLimit.toFixed(2)}× to count as a benefit.
         Dashed right: every other tenant must be entirely left of {harmLimit.toFixed(2)}× to count as unharmed.
         {clipped && " An arrowhead means the interval continues beyond the plotted range."}
         {single && " A hollow point was measured in one replay pair only, which gives no interval."}

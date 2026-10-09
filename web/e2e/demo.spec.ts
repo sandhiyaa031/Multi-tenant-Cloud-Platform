@@ -58,6 +58,48 @@ test("every console page renders for the demo organization", async ({ page }) =>
   await expect(page.locator(".recharts-line").first()).toBeVisible();
 });
 
+test("a stored twin verdict is displayed with its pairs, intervals and target", async ({ page }) => {
+  await signIn(page);
+  const token = await page.evaluate(() => localStorage.getItem("dbpilot.token"));
+  const headers = { Authorization: `Bearer ${token}` };
+  const get = async (path: string) => (await page.request.get(`/api/v1${path}`, { headers })).json();
+  const cluster = (await get("/clusters")).find((c: any) => c.primary_host);
+  let verified: any = null;
+  for (const p of (await get(`/proposals?cluster_id=${cluster.id}&limit=300`)).filter((p: any) => p.verification === "full" && p.action.tenant_role)) {
+    const detail = await get(`/proposals/${p.id}`);
+    if (detail.twin_runs.at(-1)?.verdict?.treatment_first) { verified = detail; break; }
+  }
+  test.skip(!verified, "no proposal has been through the pair-based twin yet (run twin.spec.ts once)");
+
+  await page.goto(`/app/recommendations/${verified.id}`);
+  const twin = page.locator(".card", { hasText: "Digital twin result" });
+  const pairs = verified.twin_runs.at(-1).verdict.looks;
+  await expect(twin.locator(".stat", { hasText: "Replay pairs" }).locator(".value")).toHaveText(String(pairs));
+  // Every tenant and class the twin measured has a row, the target is marked, and each row lists one ratio per pair.
+  const target = `${verified.action.tenant_role}/`;
+  for (const [key, effect] of Object.entries<any>(verified.twin_runs.at(-1).verdict.effects)) {
+    const row = twin.locator("tr", { hasText: key });
+    await expect(row).toBeVisible();
+    if (key.startsWith(target)) await expect(row).toContainText("target");
+    if (effect.pair_ratios) {
+      const listed = ((await row.locator(".pairs").textContent()) ?? "").match(/T→C|C→T/g) ?? [];
+      expect(listed, `${key}: one ratio per replay pair`).toHaveLength(Object.keys(effect.pair_ratios).length);
+    }
+  }
+  await expect(twin.locator("svg.forest")).toContainText("◂ target");
+  await expect(page.getByText(CRASH)).toHaveCount(0);
+  await page.screenshot({ path: "test-results/twin-view.png", fullPage: true });
+
+  // The same verdict in the Digital Twin Lab, and prediction beside outcome under Experiments.
+  await page.getByRole("link", { name: "Digital Twin Lab", exact: true }).click();
+  await expect(page.locator("svg.forest").first()).toBeVisible();
+  await page.getByRole("link", { name: "Experiments", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Prediction against outcome" })).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByText(CRASH)).toHaveCount(0);
+  await page.screenshot({ path: "test-results/experiments.png", fullPage: true });
+});
+
 test("a proposed change goes through the canary into production and is rolled back", async ({ page }) => {
   await signIn(page);
   await undoEarlierRuns(page);

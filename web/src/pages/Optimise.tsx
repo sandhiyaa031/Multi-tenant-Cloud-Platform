@@ -263,7 +263,7 @@ export function ProposalPage() {
             </Card>
           </div>
           <Card title="Verification" sub="tiers run cheapest first; the first that rejects stops the proposal"><Steps steps={d.steps} /></Card>
-          {twin && <TwinRun run={twin} />}
+          {twin && <TwinRun run={twin} target={d.action.tenant_role} />}
           {d.canary && <CanaryView canary={d.canary} />}
           {d.evidence?.trace && <Card title="Agent trace"><Trace evidence={d.evidence} /></Card>}
         </div>
@@ -291,7 +291,7 @@ function Steps({ steps }: { steps: ProposalDetail["steps"] }) {
 // Values the pair-based gate can produce with two or three disagreeing pairs span many orders of magnitude.
 const bounded = (v: number) => (v >= 100 ? ">100" : v < 0.01 ? "<0.01" : v.toFixed(2));
 
-function TwinRun({ run }: { run: any }) {
+function TwinRun({ run, target }: { run: any; target?: string | null }) {
   const v = run.verdict;
   const pairs = v.looks ?? run.repetitions ?? 1;
   // Which arm ran first in each pair. Verdicts stored before this was recorded do not have it.
@@ -310,14 +310,15 @@ function TwinRun({ run }: { run: any }) {
           <h3>Effect per tenant: p95 latency, treatment ÷ control</h3>
           <p className="secondary">
             Each replay pair is one control and one treatment replay of the same captured window, run one after the other. The ratio is the
-            geometric mean over the pairs, and the interval comes from how much the pairs disagree, so a single pair gives no interval and a
-            few disagreeing pairs give a very wide one. Harm counts only if it was seen both with the treatment arm running first and with it running second.
+            geometric mean over the pairs, and the interval comes from how much the pairs disagree, so a single pair gives no interval and
+            with only a few pairs it is wide even when they agree. The target must be shown to benefit and every other tenant shown unharmed;
+            "uncertain" means the interval does not settle that. Harm counts only if it was seen both with the treatment arm running first and with it running second.
           </p>
-          <EffectsPlot effects={v.effects} />
+          <EffectsPlot effects={v.effects} target={target} />
           <div className="table-wrap" style={{ marginTop: 10 }}><table>
             <thead><tr><th>Tenant / class</th><th>Finding</th><th className="num">Control p95</th><th className="num">Treatment p95</th><th className="num">Ratio</th><th className="num">Interval</th><th>Ratio in each pair</th><th className="num">Samples</th></tr></thead>
             <tbody>{Object.entries<any>(v.effects).sort().map(([k, e]) => (
-              <tr key={k}><td>{k}</td><td><Badge>{e.status}</Badge></td><td className="num">{fmt.ms(e.control)}</td><td className="num">{fmt.ms(e.treatment)}</td>
+              <tr key={k}><td>{k}{target && k.startsWith(target + "/") ? <span className="muted"> · target</span> : ""}</td><td><Badge>{e.status}</Badge></td><td className="num">{fmt.ms(e.control)}</td><td className="num">{fmt.ms(e.treatment)}</td>
                 <td className="num">{e.ratio == null ? "–" : `${bounded(e.ratio)}×`}</td><td className="num">{e.lo == null ? "–" : `${bounded(e.lo)} – ${bounded(e.hi)}`}</td>
                 <td className="pairs">{perPair(e).length === 0 ? "–" : perPair(e).map(([n, r]) => `${bounded(r)}${order(n)}`).join(" · ")}</td>
                 <td className="num">{e.n_control} / {e.n_treatment}</td></tr>
@@ -410,7 +411,7 @@ function TwinFor({ cluster }: { cluster: Cluster }) {
         )}</Load>
       </Card>
       <Load of={list}>{() => ids.length === 0 ? <div className="empty">No twin runs yet. Submit a recommendation with full verification to see one here.</div> : (
-        <>{ids.map((id) => <Detail key={id} id={id}>{(d) => d.twin_runs.length ? <div><Heading d={d} /><TwinRun run={d.twin_runs.at(-1)} /></div> : null}</Detail>)}</>
+        <>{ids.map((id) => <Detail key={id} id={id}>{(d) => d.twin_runs.length ? <div><Heading d={d} /><TwinRun run={d.twin_runs.at(-1)} target={d.action.tenant_role} /></div> : null}</Detail>)}</>
       )}</Load>
     </div>
   );
@@ -461,13 +462,14 @@ function ExperimentsFor({ cluster }: { cluster: Cluster }) {
     <div className="stack">
       <PageHead title="Experiments">
         Computed from the outcome ledger of this cluster: for each way of producing and verifying proposals, how many reached production,
-        how many harmed a tenant there, and how often the twin predicted the direction production then showed. Nothing here is estimated.
+        in how many a tenant other than the target was slower there, and how often the twin predicted the direction production then showed.
+        These are counts from the ledger, not an evaluation: see the note under the table.
       </PageHead>
       <Card title="By proposer and verification">
         <Load of={summary}>{(s) => s.groups.length === 0 ? <div className="empty">No proposals yet, so there is nothing to compare.</div> : (
           <>
             <div className="table-wrap"><table>
-              <thead><tr><th>Proposer</th><th>Verification</th><th className="num">Proposals</th><th className="num">Reached production</th><th className="num">Harmed a tenant there</th><th className="num">Rolled back</th><th className="num">Twin direction agreed</th><th>Outcomes</th></tr></thead>
+              <thead><tr><th>Proposer</th><th>Verification</th><th className="num">Proposals</th><th className="num">Reached production</th><th className="num">A tenant slower there</th><th className="num">Rolled back</th><th className="num">Twin direction agreed</th><th>Outcomes</th></tr></thead>
               <tbody>{s.groups.map((g: any, i: number) => (
                 <tr key={i}><td>{g.source}</td><td>{label(g)}</td><td className="num">{g.proposals}</td><td className="num">{g.reached_production}</td>
                   <td className="num">{g.reached_production ? `${g.harmful_in_production} (${fmt.pct(g.harmful_in_production / g.reached_production)})` : "–"}</td>
@@ -477,8 +479,9 @@ function ExperimentsFor({ cluster }: { cluster: Cluster }) {
               ))}</tbody>
             </table></div>
             <p className="muted" style={{ marginTop: 10 }}>
-              "Harmed" means a tenant other than the target ran more than {fmt.pct(s.harm_ratio - 1)} slower at p95 during the canary windows than before the change.
-              Direction agreement compares the twin's ratio with production's for the same tenant and class, treating changes within ±{fmt.pct(s.deadband)} as no change.
+              "Slower" means a tenant other than the target ran more than {fmt.pct(s.harm_ratio - 1)} slower at p95 during the canary windows than in the
+              windows just before the change. That is a before-and-after comparison with no control, so on a machine whose speed drifts it also counts
+              slowdowns the change did not cause. Direction agreement compares the twin's ratio with production's for the same tenant and class, treating changes within ±{fmt.pct(s.deadband)} as no change.
             </p>
           </>
         )}</Load>

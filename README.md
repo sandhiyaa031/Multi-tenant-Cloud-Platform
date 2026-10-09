@@ -600,7 +600,7 @@ TWIN_TOKEN=
 TWIN_DELAY_S=180                 # how far the twin source trails production
 TWIN_WINDOW_S=120                # length of workload replayed; at most TWIN_DELAY_S
 TWIN_REPETITIONS=2
-TWIN_MAX_LOOKS=3                 # replays an inconclusive verdict may use before escalating
+TWIN_MAX_LOOKS=3                 # replay pairs a verdict may use before escalating; one pair decides nothing
 
 # Demo organization created by demo-seed
 DEMO_ADMIN_EMAIL=admin@demo.dbpilot.dev
@@ -632,6 +632,7 @@ should add the smaller profile to `.env` before the first start:
 | `STANDBY_SHARED_BUFFERS` (replica, twin source) | 256MB | 128MB |
 | `DP_MEM_LIMIT` / `REPLICA_MEM_LIMIT` / `TWIN_MEM_LIMIT` | 6g / 4g / 8g | 1536m / 768m / 1536m |
 | `TWIN_REPETITIONS` | 2 | 1 |
+| `TWIN_MAX_LOOKS` | 3 | 8 (short windows need more pairs; about 17 minutes per verdict) |
 | `EVAL_RATE_SCALE` / `EVAL_POOL_SIZE` | 1.0 / 16 | 0.5 / 8 |
 | `LOG_RETENTION_MIN` | 0 (keep the hour) | 15 |
 

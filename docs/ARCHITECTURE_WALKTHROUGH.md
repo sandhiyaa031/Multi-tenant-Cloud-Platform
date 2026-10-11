@@ -197,6 +197,16 @@ which is too few for a steady p95. In the closing trials that produced one false
 inverse. `Engine.recover`, run at start-up, rolls back any proposal found in `CANARY`: a change nobody was watching is
 treated as unsafe.
 
+### Reading aids (added after the evaluation; they decide nothing)
+
+`controlplane/app/planning.py` holds two pure functions. `twin_planning` is called by `get_proposal`
+(`routers/proposals.py`) and adds, for each tenant and class of a stored verdict, an estimate of the replay pairs needed
+to show it unharmed (`pairs_needed` solves the gate's interval condition for the number of pairs). 
+`canary_false_alarms` is called by `GET /clusters/{id}/canary-noise` (`routers/insight.py`): it slides the canary's own
+`window_breaches` and `rollback_reason` over recent rows of `cp.latency_stats`, skipping any stretch that contains a
+canary start, a canary finish or a rollback. The console shows them in `TwinRun` and `CanaryNoise` (`Optimise.tsx`);
+`downloadEvidence` on the proposal page saves the whole proposal record as JSON.
+
 ### Step 9: the outcome ledger
 
 The view `cp.outcome_ledger` joins each proposal with its latest twin verdict and its canary result

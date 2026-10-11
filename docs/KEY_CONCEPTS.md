@@ -140,7 +140,7 @@ proposal with its verification steps, twin prediction and production result. The
 
 **Unit and integration tests.** Code that checks the software does what it was written to do: a viewer cannot write, a
 clone starts at the right moment, the gate rejects a synthetic harmful input. They answer "is it built correctly?".
-DBPilot has 275 of them plus browser tests.
+DBPilot has 286 of them plus browser tests.
 
 **Experimental evidence.** Measurements of how the system behaves on real workload: how often the gate is right, how
 much noise there is. They answer "does the idea work, and how well?". Passing tests say nothing about this. DBPilot's

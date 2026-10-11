@@ -105,6 +105,10 @@ The demo workload has `t_analytic` look items up in `order_line`, which has no i
    - `t_analytic/OLAP` (the target): about 0.10× to 0.13×, interval entirely below 0.90, finding "benefits".
    - The other four rows: ratios near 1.0 with intervals such as 0.77 to 1.29, finding "uncertain".
    - The "Ratio in each pair" column shows every pair and which arm ran first.
+   - "Pairs to show unharmed" estimates how many pairs each tenant would have needed. In one recorded run it said
+     about 12, 17 and 21 for three neighbours and more than 500 for the fourth, against the 8 that were run; it varies
+     from run to run.
+   - **Download evidence** at the top of the page saves the whole record as a JSON file.
 
    What to say: the change clearly helps its tenant, and nobody looks hurt, but the twin cannot *show* the others are
    within 5% because two identical replays on this machine already differ by 5 to 12%. So the system does not apply it
@@ -117,7 +121,8 @@ The demo workload has `t_analytic` look items up in `order_line`, which has no i
 7. **See the effect.** Overview or Query Intelligence: `t_analytic`'s lookup is now several times faster.
 8. **Roll back.** On the proposal page choose **Roll back**. Expected: state **Rolled back**; the index is gone.
 9. **Evidence.** Experiments shows what the twin predicted against what production did. Audit History shows who decided
-   what.
+   what. Canary Deployments opens with the **Canary noise check**: how often the canary's rule would have fired on
+   recent telemetry with no change at all.
 
 A shorter version (about 3 minutes) skips the twin: Recommendations → **Propose an action** → "Index for one tenant" →
 Verification **Canary only (skips the twin)** → **Submit for verification**. It goes T0 → canary → Applied; then roll it

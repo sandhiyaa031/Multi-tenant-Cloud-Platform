@@ -26,7 +26,7 @@ and over a canary alone.
 
 | Part | State |
 |---|---|
-| Control plane: accounts, organizations, roles, audit, row-level isolation | Built; 172 automated tests with the gate and engine |
+| Control plane: accounts, organizations, roles, audit, row-level isolation | Built; 183 automated tests with the gate and engine (172 at the time of the evaluation) |
 | Multi-tenant data plane: partition and role per tenant, row-level security, replica, pooler, least-privilege executor | Built; 36 tests |
 | Workload driver (TPC-C transactions and analytical queries, open loop) and evaluation harness | Built; 20 tests |
 | Telemetry collector | Built, tested |
@@ -235,3 +235,27 @@ instance. That is the absence of a result in a short search, not evidence that n
 5. Give the canary a measure of client-side waiting, and longer windows or a minimum sample count that makes a p95
    meaningful for low-traffic classes.
 6. Run the LLM agent against a live model and compare what it proposes with the rules.
+
+## 8. Added after the closing evaluation
+
+Three small features were added once the evaluation was finished. They are reading aids: none of them changes what the
+gate, the engine or the canary decides, so the system that was measured above is the system that decides today.
+
+- **Canary noise check** (Canary Deployments page; `GET /clusters/{id}/canary-noise`; `controlplane/app/planning.py`).
+  The canary's own rule is replayed over recent telemetry, leaving out the moments when DBPilot applied or undid a
+  change. Whatever it would have rolled back is a false alarm. It was prompted by the false rollback in Part B. On the
+  three hours that included the closing trials it flagged 95 of 344 stretches (28%), most often the class with a median
+  of 7 transactions per 20-second window. That period also contains workload restarts between trials, twin replays and
+  test runs on the same machine, which the check does not leave out, and the stretches overlap; so the figure is an
+  indication that the canary's rule is fragile here, not a false-alarm rate.
+- **Pairs to show unharmed** (twin result table). For each tenant and class, the number of replay pairs at which its
+  interval would fit under 1.05x if its ratio and the disagreement between pairs stayed as measured. It solves the
+  gate's own condition for the number of pairs; it is an estimate and is labelled as one.
+- **Download evidence** (proposal page). Everything recorded about a proposal as one JSON file.
+
+Tests after these additions: control plane, gate and engine 183 (was 172; 11 new in `tests/test_planning.py`); the
+browser tests check the new card, the new column and the download.
+
+Suggested and deliberately not built, because each changes a decision or a measurement and would need its own
+validation first: running the twin's two arms at the same time; a canary guard on waiting at the pooler; canary windows
+sized by sample count instead of by time.

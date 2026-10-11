@@ -11,6 +11,7 @@ from fastapi.concurrency import run_in_threadpool
 from app.config import get_settings
 from app.deps import Principal, require_role
 from app.observe import open_observer
+from app.planning import canary_false_alarms
 
 router = APIRouter(prefix="/clusters/{cluster_id}", tags=["insight"])
 
@@ -127,3 +128,29 @@ async def experiments(cluster_id: UUID, principal: Principal = Depends(require_r
         cur = await conn.execute("SELECT id::text, db_role FROM cp.tenants WHERE cluster_id = %s", (cluster_id,))
         roles = {r["id"]: r["db_role"] for r in await cur.fetchall()}
     return {"harm_ratio": HARM_RATIO, "deadband": DEADBAND, "groups": summarise(rows, roles)}
+
+
+@router.get("/canary-noise")
+async def canary_noise(cluster_id: UUID, minutes: int = Query(default=180, ge=10, le=1440),
+                       principal: Principal = Depends(require_role("VIEWER"))):
+    """How often the canary's rule would have fired on recent telemetry while nothing was being
+    changed. A canary is only as trustworthy as this number is small."""
+    async with principal.tx() as conn:
+        cur = await conn.execute(
+            "SELECT l.window_end, t.db_role, l.query_class, l.p95_ms, l.txn_count FROM cp.latency_stats l"
+            " JOIN cp.tenants t ON t.id = l.tenant_id WHERE l.cluster_id = %s"
+            " AND l.window_end > now() - make_interval(mins => %s) ORDER BY l.window_end", (cluster_id, minutes))
+        rows = await cur.fetchall()
+        # Moments at which production was changed: a canary applying, finishing, or a rollback.
+        cur = await conn.execute(
+            "SELECT c.started_at AS at FROM cp.canaries c JOIN cp.proposals p ON p.id = c.proposal_id WHERE p.cluster_id = %s"
+            " UNION ALL SELECT c.finished_at FROM cp.canaries c JOIN cp.proposals p ON p.id = c.proposal_id"
+            "  WHERE p.cluster_id = %s AND c.finished_at IS NOT NULL"
+            " UNION ALL SELECT p.updated_at FROM cp.proposals p WHERE p.cluster_id = %s AND p.state = 'ROLLED_BACK'",
+            (cluster_id, cluster_id, cluster_id))
+        changes = [r["at"] for r in await cur.fetchall()]
+    windows: dict = {}
+    for r in rows:
+        windows.setdefault(r["window_end"], {})[f"{r['db_role']}/{r['query_class']}"] = (float(r["p95_ms"]), r["txn_count"])
+    return {"minutes": minutes,
+            **canary_false_alarms([{"end": end, "keys": keys} for end, keys in sorted(windows.items())], changes)}

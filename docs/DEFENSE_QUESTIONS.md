@@ -69,7 +69,7 @@ Bonferroni correction: the 5% error allowance is divided among the tenant compar
 ## The evidence
 
 **14. How was it tested?**
-275 automated tests against real PostgreSQL instances (172 control plane, gate and engine; 36 data plane; 20 workload;
+286 automated tests against real PostgreSQL instances (183 control plane, gate and engine; 36 data plane; 20 workload;
 47 twin), and three browser tests that drive the running stack end to end.
 
 **15. Do passing tests show the idea works?**
@@ -129,6 +129,12 @@ Yes. In the closing trials it rolled back a statistics refresh, which changes no
 tenant's analytical class at 1.27× baseline while the load generator measured 1.03×. A 20-second window holds only a
 handful of that tenant's queries, and a p95 over a handful of samples is unsteady. Longer windows or a larger minimum
 sample count would be the fix; it was not made.
+
+**25c. Can you tell in advance whether a canary is trustworthy?**
+Partly. The Canary Deployments page has a noise check: it replays the canary's rule over recent telemetry in which
+DBPilot changed nothing and counts what it would have rolled back. On the three hours containing the closing trials it
+flagged 28% of stretches, mostly the class with about 7 transactions per window. That period includes workload restarts
+and other load on the laptop, so it is an indication that the rule is fragile here, not a measured rate.
 
 **26. Does the LLM agent work?**
 The agent loop, its tools and its path through the API are tested against a scripted stand-in model. It has never been

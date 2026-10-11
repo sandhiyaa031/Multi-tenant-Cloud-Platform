@@ -218,6 +218,17 @@ function lifecycle(d: ProposalDetail): { at: number; tone: Tone; label?: string;
   }
 }
 
+// Everything recorded about one proposal, as a file a reviewer can keep: the action, each
+// verification step, the twin's measurements and the canary's observations.
+function downloadEvidence(d: ProposalDetail) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify({ exported_at: new Date().toISOString(), proposal: d }, null, 2)], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `dbpilot-proposal-${d.id}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function ProposalPage() {
   const { id } = useParams();
   const { me } = useAuth();
@@ -233,7 +244,7 @@ export function ProposalPage() {
       const twin = d.twin_runs.at(-1);
       return (
         <div className="stack">
-          <PageHead title={describeAction(d.action)} action={<Link to="/app/recommendations">← All recommendations</Link>}>
+          <PageHead title={describeAction(d.action)} action={<span className="row"><button onClick={() => downloadEvidence(d)}>Download evidence</button><Link to="/app/recommendations">← All recommendations</Link></span>}>
             Proposed by {d.source} · {fmt.datetime(d.created_at)}
           </PageHead>
           <Card title="Status" action={<Badge>{d.state}</Badge>}>
@@ -297,6 +308,13 @@ function TwinRun({ run, target }: { run: any; target?: string | null }) {
   // Which arm ran first in each pair. Verdicts stored before this was recorded do not have it.
   const order = (n: string) => (v.treatment_first ? (v.treatment_first[n] ? " T→C" : " C→T") : "");
   const perPair = (e: any) => Object.entries<number>(e.pair_ratios ?? {}).sort((a, b) => Number(a[0]) - Number(b[0]));
+  // An estimate from the API, not part of the verdict: pairs that would show this key unharmed.
+  const needed = (k: string) => {
+    const n = run.planning?.[k];
+    if (!n) return "–";
+    if (!n.reachable) return "not at this ratio";
+    return n.needed == null ? "> 500" : n.needed <= n.pairs ? `${n.needed} (met)` : `about ${n.needed}`;
+  };
   return (
     <Card title="Digital twin result" sub={`${run.transactions} captured transactions, replayed in ${pairs} pair${pairs === 1 ? "" : "s"} of control and treatment over windows of ${run.window_s.toFixed(0)} s`} action={<Badge>{v.decision}</Badge>}>
       <div className="grid cols-4" style={{ marginBottom: 14 }}>
@@ -316,15 +334,22 @@ function TwinRun({ run, target }: { run: any; target?: string | null }) {
           </p>
           <EffectsPlot effects={v.effects} target={target} />
           <div className="table-wrap" style={{ marginTop: 10 }}><table>
-            <thead><tr><th>Tenant / class</th><th>Finding</th><th className="num">Control p95</th><th className="num">Treatment p95</th><th className="num">Ratio</th><th className="num">Interval</th><th>Ratio in each pair</th><th className="num">Samples</th></tr></thead>
+            <thead><tr><th>Tenant / class</th><th>Finding</th><th className="num">Control p95</th><th className="num">Treatment p95</th><th className="num">Ratio</th><th className="num">Interval</th><th>Ratio in each pair</th><th className="num" title="Replay pairs that would show this tenant within the 5% margin, if the pairs kept disagreeing as much as these did">Pairs to show unharmed</th><th className="num">Samples</th></tr></thead>
             <tbody>{Object.entries<any>(v.effects).sort().map(([k, e]) => (
               <tr key={k}><td>{k}{target && k.startsWith(target + "/") ? <span className="muted"> · target</span> : ""}</td><td><Badge>{e.status}</Badge></td><td className="num">{fmt.ms(e.control)}</td><td className="num">{fmt.ms(e.treatment)}</td>
                 <td className="num">{e.ratio == null ? "–" : `${bounded(e.ratio)}×`}</td><td className="num">{e.lo == null ? "–" : `${bounded(e.lo)} – ${bounded(e.hi)}`}</td>
                 <td className="pairs">{perPair(e).length === 0 ? "–" : perPair(e).map(([n, r]) => `${bounded(r)}${order(n)}`).join(" · ")}</td>
+                <td className="num">{needed(k)}</td>
                 <td className="num">{e.n_control} / {e.n_treatment}</td></tr>
             ))}</tbody>
           </table></div>
           {v.treatment_first && <p className="muted" style={{ marginTop: 6 }}>T→C: the treatment arm ran first in that pair. C→T: the control arm ran first.</p>}
+          {run.planning && Object.keys(run.planning).length > 0 && (
+            <p className="muted" style={{ marginTop: 6 }}>
+              "Pairs to show unharmed" is an estimate, not part of the verdict: the number of replay pairs at which this tenant's interval would
+              fit under 1.05×, if its ratio and the disagreement between pairs stayed as measured here. It says how far this machine is from a decision.
+            </p>
+          )}
         </>
       ) : <p className="notice">Judged with the aggregate gate: only the workload as a whole was compared, so per-tenant effects were not examined.</p>}
       <h3 style={{ marginTop: 14 }}>Reasons</h3>
@@ -435,6 +460,34 @@ function VerificationFor({ cluster }: { cluster: Cluster }) {
 export function Canaries() {
   return <NeedCluster>{(c) => <CanariesFor cluster={c} />}</NeedCluster>;
 }
+function CanaryNoise({ cluster }: { cluster: Cluster }) {
+  const noise = useApi<any>(`/clusters/${cluster.id}/canary-noise?minutes=180`, 60000);
+  return (
+    <Card title="Canary noise check" sub="the canary's own rule, replayed over the last 3 hours of telemetry, leaving out the moments when DBPilot applied or undid a change">
+      <Load of={noise}>{(n) => n.sequences === 0 ? (
+        <div className="empty">Not enough quiet telemetry yet. This needs at least six consecutive collector windows with traffic and no change in progress.</div>
+      ) : (
+        <>
+          <p className="secondary">
+            In <strong>{n.sequences}</strong> stretches of three baseline windows followed by three watched windows ({n.window_s.toFixed(0)} s each), the rule
+            "above {fmt.ratio(n.limit)} of baseline in two of three windows" would have rolled back <strong>{n.alarms}</strong> ({fmt.pct(n.alarms / n.sequences)}).
+            DBPilot changed nothing in any of them, so each one is a false alarm. A shift in the workload itself, or other load on the machine,
+            is not left out: the canary cannot tell those from the effect of a change either. The stretches overlap, so read this as an indication, not a rate.
+          </p>
+          <div className="table-wrap"><table>
+            <thead><tr><th>Tenant / class</th><th className="num">Transactions per window (median)</th><th className="num">Stretches judged</th><th className="num">False alarms</th></tr></thead>
+            <tbody>{Object.entries<any>(n.keys).sort().map(([k, v]) => (
+              <tr key={k}><td>{k}</td><td className="num">{v.median_txns_per_window == null ? "–" : fmt.n(v.median_txns_per_window)}</td><td className="num">{v.sequences}</td>
+                <td className="num" style={v.alarms > 0 ? { color: "#ffb4b4", fontWeight: 600 } : undefined}>{v.alarms} ({fmt.pct(v.alarms / v.sequences)})</td></tr>
+            ))}</tbody>
+          </table></div>
+          <p className="muted" style={{ marginTop: 6 }}>A class with only a few transactions per window has an unsteady p95, and a canary on it will sometimes undo a harmless change.</p>
+        </>
+      )}</Load>
+    </Card>
+  );
+}
+
 function CanariesFor({ cluster }: { cluster: Cluster }) {
   const { list, ids } = useDetails(cluster, (p) => ["CANARY", "APPLIED", "ROLLED_BACK", "ROLLBACK_REQUESTED"].includes(p.state), 10);
   return (
@@ -443,6 +496,7 @@ function CanariesFor({ cluster }: { cluster: Cluster }) {
         Changes applied to production under watch. Each tenant's p95 is compared with its baseline every collector window; a breach in two
         of three windows, or lost telemetry, runs the stored inverse automatically.
       </PageHead>
+      <CanaryNoise cluster={cluster} />
       <Load of={list}>{() => ids.length === 0 ? <div className="empty">No change has reached production yet.</div> : (
         <>{ids.map((id) => <Detail key={id} id={id}>{(d) => d.canary ? <div><Heading d={d} /><CanaryView canary={d.canary} /></div> : null}</Detail>)}</>
       )}</Load>

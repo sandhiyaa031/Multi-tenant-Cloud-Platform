@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, ValidationError
 from app.config import get_settings
 from app.deps import ROLE_RANK, Principal, require_role
 from app.observe import open_observer
+from app.planning import twin_planning
 from dbpilot_core import actions
 
 router = APIRouter(tags=["proposals"])
@@ -195,6 +196,8 @@ async def get_proposal(proposal_id: UUID, principal: Principal = Depends(require
             "SELECT applied, inverse, contract, baseline, observations, result, outcome, outcome_reason,"
             " started_at, finished_at FROM cp.canaries WHERE proposal_id = %s", (proposal_id,))
         canary = await cur.fetchone()
+    # A reading aid, computed from the stored verdict: how many pairs each tenant would have needed.
+    twin_runs = [{**run, "planning": twin_planning(run["verdict"])} for run in twin_runs]
     return {**proposal, "steps": steps, "twin_runs": twin_runs, "canary": canary}
 
 

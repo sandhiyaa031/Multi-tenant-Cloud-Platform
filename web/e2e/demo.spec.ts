@@ -52,6 +52,16 @@ test("every console page renders for the demo organization", async ({ page }) =>
     await expect(page.getByText(CRASH), `${link} crashed`).toHaveCount(0);
     await expect(page.locator(".page .error"), `${link} shows an error`).toHaveCount(0);
   }
+  // The canary's rule replayed over quiet telemetry: the numbers on the page are the API's.
+  const token = await page.evaluate(() => localStorage.getItem("dbpilot.token"));
+  const headers = { Authorization: `Bearer ${token}` };
+  const cluster = (await (await page.request.get("/api/v1/clusters", { headers })).json()).find((c: any) => c.primary_host);
+  const noise = await (await page.request.get(`/api/v1/clusters/${cluster.id}/canary-noise?minutes=180`, { headers })).json();
+  await page.getByRole("link", { name: "Canary Deployments", exact: true }).click();
+  const card = page.locator(".card", { hasText: "Canary noise check" });
+  if (noise.sequences === 0) await expect(card).toContainText("Not enough quiet telemetry yet");
+  else for (const key of Object.keys(noise.keys)) await expect(card.locator("tr", { hasText: key })).toBeVisible();
+  await card.screenshot({ path: "test-results/canary-noise.png" });
   // Live telemetry: the four seeded tenants and a drawn latency chart.
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await expect(page.locator(".stat", { hasText: "Tenants" }).locator(".value")).toHaveText("4");
@@ -87,6 +97,16 @@ test("a stored twin verdict is displayed with its pairs, intervals and target", 
     }
   }
   await expect(twin.locator("svg.forest")).toContainText("◂ target");
+  // The planning estimate the API adds: for each key with an interval, pairs that would show it unharmed.
+  const planning = verified.twin_runs.at(-1).planning;
+  await expect(twin.locator("th", { hasText: "Pairs to show unharmed" })).toBeVisible();
+  for (const [key, plan] of Object.entries<any>(planning)) {
+    const shown = plan.reachable ? (plan.needed == null ? "> 500" : String(plan.needed)) : "not at this ratio";
+    await expect(twin.locator("tr", { hasText: key }), `${key}: pairs needed`).toContainText(shown);
+  }
+  // The whole record of the proposal can be kept as a file.
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Download evidence" }).click()]);
+  expect(download.suggestedFilename()).toBe(`dbpilot-proposal-${verified.id}.json`);
   await expect(page.getByText(CRASH)).toHaveCount(0);
   await page.screenshot({ path: "test-results/twin-view.png", fullPage: true });
 

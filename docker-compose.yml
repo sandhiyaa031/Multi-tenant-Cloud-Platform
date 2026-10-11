@@ -71,6 +71,9 @@ services:
       # The LLM agent. Without a key, the rule-based proposer still works.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AGENT_MODEL: ${AGENT_MODEL:-claude-opus-5-5}
+      # Used only when no Anthropic key is set: the same agent loop against a model served by Groq.
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
       # Tests only: the collector integration test runs inside this image.
       CONTROL_DB_COLLECTOR_URL: postgresql://dbpilot_collector:${CONTROL_DB_COLLECTOR_PASSWORD}@control-db:5432/dbpilot_control
       DP_MONITOR_PASSWORD: ${DATAPLANE_MONITOR_PASSWORD}

@@ -162,7 +162,10 @@ def propose(obs: Observer, client: anthropic.Anthropic | None = None, hint: str 
     usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "requests": 0}
 
     def evidence(**extra) -> dict:
-        return {"proposer": "agent", "model": MODEL, "trace": trace, "usage": usage, **extra}
+        # A client for another provider names its own model and says what it did to fit that provider's limits.
+        served = {"provider": client.provider, "waited_for_rate_limit_s": round(client.waited_s, 1),
+                  "note": "older tool results were shortened before being shown to the model"} if hasattr(client, "provider") else {}
+        return {"proposer": "agent", "model": getattr(client, "model", MODEL), "trace": trace, "usage": usage, **served, **extra}
 
     for _ in range(MAX_TURNS):
         # Refusal fallback is opt-in on this model; "default" lets the API pick the fallback by refusal category.

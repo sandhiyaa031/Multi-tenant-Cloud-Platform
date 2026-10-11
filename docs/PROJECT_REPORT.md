@@ -1020,8 +1020,16 @@ gate, the engine or the canary decides, so the system that was measured in secti
   interval would fit under 1.05x if its ratio and the disagreement between pairs stayed as measured. It solves the
   gate's own condition for the number of pairs; it is an estimate and is labelled as one.
 - **Download evidence** (proposal page). Everything recorded about a proposal as one JSON file.
+- **A second model provider for the agent** (`controlplane/app/proposers/groq_client.py`). The agent loop can now run
+  against a model served by Groq when no Anthropic key is set (`GROQ_API_KEY`, `GROQ_MODEL`, default
+  `openai/gpt-oss-120b`). It is an adapter around the same loop, tools and validation. Because a free Groq account
+  allows 8,000 tokens a minute, the adapter waits out the per-minute limit and shows the model shortened versions of
+  older tool results; both are recorded with the proposal. **The agent has still not completed a live run**: the first
+  attempt, on 2026-10-11, was refused by the provider because the account's daily quota (200,000 tokens) was already
+  spent. The adapter is covered by 8 tests against a scripted HTTP server.
 
-Tests after these additions: control plane, gate and engine 183 (was 172; 11 new in `tests/test_planning.py`); the
+Tests after these additions: control plane, gate and engine 191 (was 172; 11 new in `tests/test_planning.py`, 8 in
+`tests/test_groq_client.py`); the
 browser tests check the new card, the new column and the download.
 
 Suggested and deliberately not built, because each changes a decision or a measurement and would need its own
@@ -1029,7 +1037,7 @@ validation first: running the twin's two arms at the same time; a canary guard o
 sized by sample count instead of by time.
 
 Test counts elsewhere in this report (275 in total, 172 for the control plane) are those at the time of the
-evaluation; the control-plane suite now has 183.
+evaluation; the control-plane suite now has 191.
 
 ## 8. References
 

@@ -68,7 +68,7 @@ Three groups of services, called planes, run together with Docker Compose:
 | Data plane | PostgreSQL primary and replica, connection pooler, four demo tenants, workload generator | Is the thing being protected |
 | Experimentation plane | Twin node agent with its clones | Tests changes |
 
-There are 286 automated tests and three browser test files that drive the whole running system.
+There are 294 automated tests and three browser test files that drive the whole running system.
 [ARCHITECTURE_WALKTHROUGH.md](ARCHITECTURE_WALKTHROUGH.md) has the map.
 
 ## 6. What happened when it was measured

@@ -322,6 +322,7 @@ def test_agent_proposal_for_a_tenant_not_on_the_cluster_is_refused(client, org, 
 def test_diagnose_without_an_api_key_says_so_and_stores_nothing(client, org, diagnosable, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     r = diagnose(client, org, diagnosable)
     assert r.status_code == 503 and "ANTHROPIC_API_KEY" in r.json()["detail"]
     assert proposal_count(client, org, diagnosable) == 0

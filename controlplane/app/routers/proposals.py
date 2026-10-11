@@ -133,11 +133,19 @@ def _diagnose(user_id: UUID, org_id: UUID, cluster_id: UUID, body: DiagnoseIn) -
         import anthropic
 
         from app.proposers import agent
-        if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+        from app.proposers.groq_client import GroqClient, GroqError
+        if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+            model = None                      # agent.propose builds the Anthropic client itself
+        elif os.environ.get("GROQ_API_KEY"):
+            model = GroqClient()
+        else:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
-                                "the LLM agent is not configured (ANTHROPIC_API_KEY is not set); the rule-based proposer is available")
+                                "the LLM agent is not configured (neither ANTHROPIC_API_KEY nor GROQ_API_KEY is set); "
+                                "the rule-based proposer is available")
         try:
-            return [agent.propose(observer, hint=body.hint)]
+            return [agent.propose(observer, client=model, hint=body.hint)]
+        except GroqError as exc:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"the model API call failed: {str(exc)[:300]}")
         except anthropic.APIError as exc:
             # The model could not be reached or refused the request at the transport level.
             # Nothing was proposed, so nothing is stored.

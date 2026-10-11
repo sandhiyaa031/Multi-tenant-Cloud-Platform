@@ -26,7 +26,7 @@ and over a canary alone.
 
 | Part | State |
 |---|---|
-| Control plane: accounts, organizations, roles, audit, row-level isolation | Built; 183 automated tests with the gate and engine (172 at the time of the evaluation) |
+| Control plane: accounts, organizations, roles, audit, row-level isolation | Built; 191 automated tests with the gate and engine (172 at the time of the evaluation) |
 | Multi-tenant data plane: partition and role per tenant, row-level security, replica, pooler, least-privilege executor | Built; 36 tests |
 | Workload driver (TPC-C transactions and analytical queries, open loop) and evaluation harness | Built; 20 tests |
 | Telemetry collector | Built, tested |
@@ -34,7 +34,7 @@ and over a canary alone.
 | Digital twin: delayed standby, clones frozen at a known moment, replay, planner what-if | Built; 47 tests on a miniature data plane |
 | Safety gate, verification engine, canary controller | Built, tested |
 | Rule-based proposer | Built, tested, finds the demo's missing index on live telemetry |
-| LLM agent | Built and tested against a scripted model. **Never run against a live model** (no API key was available) |
+| LLM agent | Built and tested against a scripted model. **Never run against a live model**: no key was available during the project, and the one attempt afterwards was refused for quota (section 8) |
 | Web console | Built; sign-in, session handling, every page and the change lifecycle covered by browser tests |
 
 Three browser scenarios drive the running stack end to end:
@@ -252,8 +252,16 @@ gate, the engine or the canary decides, so the system that was measured above is
   interval would fit under 1.05x if its ratio and the disagreement between pairs stayed as measured. It solves the
   gate's own condition for the number of pairs; it is an estimate and is labelled as one.
 - **Download evidence** (proposal page). Everything recorded about a proposal as one JSON file.
+- **A second model provider for the agent** (`controlplane/app/proposers/groq_client.py`). The agent loop can now run
+  against a model served by Groq when no Anthropic key is set (`GROQ_API_KEY`, `GROQ_MODEL`, default
+  `openai/gpt-oss-120b`). It is an adapter around the same loop, tools and validation. Because a free Groq account
+  allows 8,000 tokens a minute, the adapter waits out the per-minute limit and shows the model shortened versions of
+  older tool results; both are recorded with the proposal. **The agent has still not completed a live run**: the first
+  attempt, on 2026-10-11, was refused by the provider because the account's daily quota (200,000 tokens) was already
+  spent. The adapter is covered by 8 tests against a scripted HTTP server.
 
-Tests after these additions: control plane, gate and engine 183 (was 172; 11 new in `tests/test_planning.py`); the
+Tests after these additions: control plane, gate and engine 191 (was 172; 11 new in `tests/test_planning.py`, 8 in
+`tests/test_groq_client.py`); the
 browser tests check the new card, the new column and the download.
 
 Suggested and deliberately not built, because each changes a decision or a measurement and would need its own

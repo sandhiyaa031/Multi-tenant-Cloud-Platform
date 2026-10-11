@@ -75,8 +75,10 @@ expensive read that filters an unindexed column and that the planner confirms an
 
 **LLM proposer (agent).** A language model given ten read-only tools (latency, top queries, plans, what-if, history...)
 and one tool with an effect, `propose_action` (`controlplane/app/proposers/agent.py`). Its output goes through exactly
-the same validation and verification as a rule's. It is tested against a scripted stand-in model. **It has never been
-run against a live model in this project**, because no API key was available.
+the same validation and verification as a rule's. It is tested against a scripted stand-in model. **It has never
+completed a run against a live model in this project.** It can use an Anthropic model or, through
+`proposers/groq_client.py`, one served by Groq; the one live attempt was refused because the Groq account's daily quota
+was spent.
 
 ## Verifying changes
 
@@ -140,7 +142,7 @@ proposal with its verification steps, twin prediction and production result. The
 
 **Unit and integration tests.** Code that checks the software does what it was written to do: a viewer cannot write, a
 clone starts at the right moment, the gate rejects a synthetic harmful input. They answer "is it built correctly?".
-DBPilot has 286 of them plus browser tests.
+DBPilot has 294 of them plus browser tests.
 
 **Experimental evidence.** Measurements of how the system behaves on real workload: how often the gate is right, how
 much noise there is. They answer "does the idea work, and how well?". Passing tests say nothing about this. DBPilot's

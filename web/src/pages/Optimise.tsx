@@ -62,7 +62,7 @@ function AgentFor({ cluster }: { cluster: Cluster }) {
             <div className="row">
               <button className="primary" disabled={busy !== null} onClick={() => run("agent")}>{busy === "agent" ? "Agent is investigating…" : "Run LLM agent"}</button>
               <button disabled={busy !== null} onClick={() => run("rule")}>{busy === "rule" ? "Evaluating rules…" : "Run rule-based proposer"}</button>
-              <span className="muted">The agent can take up to a minute. It requires an API key configured on the server.</span>
+              <span className="muted">The agent needs a model API key configured on the server. It usually takes under a minute; on a rate-limited account it can take several.</span>
             </div>
           </>
         )}

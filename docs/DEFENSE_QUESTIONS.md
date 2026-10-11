@@ -69,7 +69,7 @@ Bonferroni correction: the 5% error allowance is divided among the tenant compar
 ## The evidence
 
 **14. How was it tested?**
-286 automated tests against real PostgreSQL instances (183 control plane, gate and engine; 36 data plane; 20 workload;
+294 automated tests against real PostgreSQL instances (191 control plane, gate and engine; 36 data plane; 20 workload;
 47 twin), and three browser tests that drive the running stack end to end.
 
 **15. Do passing tests show the idea works?**
@@ -137,8 +137,10 @@ flagged 28% of stretches, mostly the class with about 7 transactions per window.
 and other load on the laptop, so it is an indication that the rule is fragile here, not a measured rate.
 
 **26. Does the LLM agent work?**
-The agent loop, its tools and its path through the API are tested against a scripted stand-in model. It has never been
-run against a live model, because no API key was available. Nothing is claimed about the quality of its proposals.
+The agent loop, its tools and its path through the API are tested against a scripted stand-in model. It has never
+completed a run against a live model. No key was available during the project; afterwards a Groq path was added and
+the one attempt was refused because the free account's daily quota was already spent. Nothing is claimed about the
+quality of its proposals.
 
 ## Limitations
 

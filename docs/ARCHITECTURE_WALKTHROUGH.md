@@ -110,8 +110,9 @@ Three ways, all in `controlplane/app/routers/proposals.py`:
   `Observer.whatif_index`; if the planner estimates the cost at least halves, it emits a `create_index` action.
 - LLM agent: the same endpoint with `source: "agent"` → `agent.propose(observer)` (`proposers/agent.py`). The model is
   given the tool list `TOOLS`; each tool call is executed by `_call` against the `Observer`; the loop ends when the model
-  calls `propose_action`. Every call is stored as a trace with the proposal. Without `ANTHROPIC_API_KEY` the endpoint
-  answers 503.
+  calls `propose_action`. Every call is stored as a trace with the proposal. With no Anthropic key but a `GROQ_API_KEY`, the same loop
+  is given `proposers/groq_client.py: GroqClient`, which translates the one model call to Groq's API. With neither key the
+  endpoint answers 503.
 
 The API only writes the row. It never verifies or applies anything.
 

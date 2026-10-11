@@ -148,7 +148,8 @@ back.
 | The canary rolls back a change that should have been fine, naming `t_mixed/OLAP` | A known false alarm: that class has only a handful of queries per 20-second window, so its p95 is unsteady (seen once in three no-op trials). Say so, and propose the change again |
 | A proposal stays in "Proposed" | The engine is not running: `docker compose logs --tail 30 engine`, then `docker compose up -d --force-recreate engine collector` |
 | "Rule-based proposer" finds nothing | The index is already applied (roll the earlier proposal back), or there has been under a few minutes of traffic |
-| Agent Console: LLM agent unavailable | Expected. No `ANTHROPIC_API_KEY` is set; the LLM agent has never been run live in this project |
+| Agent Console: "the LLM agent is not configured" | Neither `ANTHROPIC_API_KEY` nor `GROQ_API_KEY` is in `.env`. Add one and run `docker compose up -d api` |
+| Agent Console: "the model API's quota is used up" | The provider refused the call. A free Groq account allows 200,000 tokens a day; try again when it has reset. The agent has not yet completed a live run in this project |
 | Signed out with "your session has ended" | Tokens last 8 hours. Sign in again |
 
 ## 7. Run the automated checks (optional)

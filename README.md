@@ -869,22 +869,27 @@ Known gaps against the design are listed in
 
 DBPilot builds on existing ideas and does not claim to have invented them:
 
-- **Testing a change on a clone and reverting on regression** is established
-  practice: Azure SQL Database tunes indexes on cloned "B-instances" with
-  replayed workload (SIGMOD 2019), and Oracle verifies invisible indexes before
-  exposing them (VLDB 2025).
+- **Validating a change and reverting on regression** is established practice:
+  Azure SQL Database implements index recommendations automatically and
+  reverts those that regress (SIGMOD 2019); Oracle creates an index invisible
+  and exposes it only once statements improve, and replays captured workload
+  on test systems.
+- **Safe tuning of a live database** has been studied on the instance as a whole
+  (OnlineTune, SIGMOD 2022).
 - **LLM-based database tuning** is an active field: GPTuner, λ-Tune, AgentTune,
   and others, evaluated mainly on single workloads with aggregate metrics.
 - **SLO-aware multi-tenant tuning** was studied before LLMs (Tempo, VLDB 2016).
+- **Comparing two versions on a noisy machine** is done more accurately by
+  running them at the same time (duet benchmarking, ICPE 2020); DBPilot's twin
+  runs its arms one after the other, and its A/A measurements show the cost.
 
-What DBPilot sets out to add is the combination, and its measurement: gating
-agent proposals on **per-tenant non-inferiority** in a shared instance, and
-quantifying what a twin adds over a canary alone, on a scenario suite that
-includes deliberate traps where the tempting change harms a neighbour. Whether
-that is a new contribution needs a systematic literature review, which has not
-yet been done.
+What DBPilot set out to add is the combination, and its measurement: gating
+proposed changes on **per-tenant non-inferiority** in a shared instance, and
+quantifying what a twin adds over a canary alone. A focused search found no
+system that does this; that is not a systematic review, and no novelty is
+claimed. What was and was not shown is in the [closing report](docs/REPORT.md).
 
-Further reading: [architecture specification](docs/ARCHITECTURE.md) ·
+Further reading: [closing report](docs/REPORT.md) · [architecture specification](docs/ARCHITECTURE.md) ·
 [learning guide](docs/LEARNING_GUIDE.md)
 
 ## License

@@ -13,6 +13,7 @@ them is an evaluation result, and nothing here supports a claim about how well D
 | `p01g/` | Full repeat of `p01e` under AC and Best performance | No level qualified; the same profile gave 220-396% CPU across sessions. The charger dropped during two levels |
 | `p01h/` | 35-minute synthetic CPU soak with speed canaries, database idle | Speed varied by 5-24% and followed CPU frequency; AC stayed on. The machine is not a controlled environment for quantitative runs |
 | `e1/` | 30 no-action (A/A) twin runs judged by the unmodified gate | 28 valid. See below |
+| `final/` | Closing evaluation (`tools/final/protocol.md`): injected effects on the E1 pairs, and a few real trials through the loop | See [the closing report](../REPORT.md) |
 
 ## E1 in brief (`e1/analysis.txt` is the full output of the frozen analysis)
 

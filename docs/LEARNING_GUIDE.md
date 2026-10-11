@@ -483,13 +483,57 @@ experiment without distorting what it measures.
 
 ---
 
+## 17. Measuring honestly — Learned the hard way
+
+**What.** The habits that turned out to matter more than any component, each
+with the mistake that taught it. The full account is in
+[REPORT.md](REPORT.md).
+
+**Key ideas.**
+- *A/A test.* Run the experiment with no change in either arm. Whatever
+  difference it reports is the noise of the method. It was not done first here;
+  when it was, the gate called harm in 2 of 9 verdicts between identical arms.
+  An A/A test belongs before the first real result, not after.
+- *The unit of evidence.* Two arms run one after the other see different
+  moments of the machine. Thousands of requests inside one replay look like a
+  large sample, but they share that one moment: the independent observations are
+  the replay pairs. Counting requests instead of pairs is the same mistake as
+  measuring one patient a thousand times and reporting a thousand patients.
+- *Writing the rule down first.* Each protocol and its pass/fail criteria were
+  written and hashed before the run. Several runs then failed criteria that
+  would have been easy to loosen afterwards.
+- *A null action.* Before asking whether a change harms anyone, check that it
+  changes anything. The parallelism scenarios did nothing to tenant queries, and
+  a "slowdown" measured for one of them was drift.
+- *Before/after is not a control.* A comparison with the minutes before has no
+  defence against a machine that drifts. Bracketing (before and after), or
+  alternating conditions, at least cancels a steady drift.
+- *The metric decides what can be seen.* A class-level p95 is set by the slowest
+  kind of operation in the class; a query that becomes many times faster or
+  slower can leave it unchanged.
+- *Semi-synthetic analysis.* When no real harmful change exists, a known effect
+  can be injected into real noise to see what the decision rule does with it.
+  That tests the rule. It does not test whether the twin resembles production,
+  and it must be labelled every time it is quoted.
+- *Concurrent arms.* Running the two versions at the same time on the same
+  machine (duet benchmarking) makes them share the machine's moods. This
+  project's twin does not do that yet; it is the first thing a continuation
+  should change.
+- *Know your instrument.* The laptop's speed followed its CPU frequency by
+  5–24% under load, and its charger dropped out during runs. Neither showed in
+  any operating-system warning; both showed in a fixed-work "speed canary" and in
+  the system's power-source log.
+
+**Limits to state openly.** None of this makes the laptop's numbers general.
+It makes them honest about what they are.
+
 ## Try it yourself
 
 ```bash
 docker compose up -d --build
 docker compose run --rm dp-seed                                # load the four tenants (~5 min)
 docker compose run --rm --no-deps api python -m pytest -q     # control plane, core, proposers
-docker compose run --rm dp-test                                # 18 data-plane tests
+docker compose run --rm dp-test                                # data-plane tests
 docker compose run --rm demo-seed                              # register the tenants as a demo organization
 docker compose run --rm workload --duration 180                # generate load; the collector records it
 docker compose exec control-db psql -U dbpilot_owner -d dbpilot_control

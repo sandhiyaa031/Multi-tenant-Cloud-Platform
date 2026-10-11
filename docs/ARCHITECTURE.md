@@ -1,7 +1,7 @@
 # DBPilot v2 — Architecture Specification
 
 Status: **frozen**. Changes to this document need a stated reason.
-Build status of each part is tracked in the [README](../README.md).
+Build status of each part is tracked in the [project report, appendix A.5](PROJECT_REPORT.md#a5-implementation-status).
 
 ## 1. What DBPilot is
 
@@ -262,7 +262,7 @@ Recorded so that the specification and the code can be compared honestly.
 | Canary staged per action (partition first, session fraction, replica first) | An index for every tenant is staged: one partition (the tenant the twin predicts to gain most), then the rest, each stage with its own canary windows. Every other action is one stage: applied, observed, kept or undone | A fraction of one tenant's sessions cannot be selected at the pooler, and there is no routed read traffic to canary on the replica |
 | Six rollback triggers | Contract breach in 2 of 3 windows (the contract is the twin's prediction plus a tolerance, so this is also the deviation-from-prediction trigger); deadlocks per window; replica lag; lost telemetry; engine restart during canary | Statement error rates are not collected, so there is no error-spike trigger |
 | Twin delay about 15 minutes | Configurable; the development stack uses 60 seconds | Faster iteration; the Kubernetes manifest sets 900 |
-| Inconclusive verdict extends the replay up to a budget | Up to three replays of fresh windows are judged together; each look is tested at a third of the error rate, so looking repeatedly does not inflate false approvals | As specified |
+| Inconclusive verdict extends the replay up to a budget | Replay pairs of fresh windows are judged together up to a budget (`TWIN_MAX_LOOKS`: 3 by default, 8 on the laptop profile); each look is tested at the error rate divided by that budget, so looking repeatedly does not inflate false approvals | As specified |
 | Executor with its own least-privilege role | `dbpilot_executor`: not a superuser; `ALTER SYSTEM` only on the allowlisted parameters; ADMIN on tenant roles only; DDL limited to `CREATE INDEX` and `DROP INDEX` by an event trigger | PostgreSQL has no privilege narrower than table ownership for `CREATE INDEX`, so as a member of the owning role it could still read or change rows |
 | Observations include waits, locks, sampled plans, workload-shift detection | Query statistics, instance counters, latency percentiles, on-demand plans, table profiles, settings | The rest is not built |
 | Prometheus for host metrics | Not added | Database telemetry is collected by DBPilot itself |

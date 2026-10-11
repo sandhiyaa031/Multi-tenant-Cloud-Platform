@@ -1,0 +1,49 @@
+trials recorded 18, valid 18, excluded 0
+
+== every valid trial ==
+ rep 0 S1_missing_index  C2_no_verification  -> APPLIED       decision in     75 s | canary HELD
+ rep 0 S1_missing_index  C3_canary_only      -> APPLIED       decision in     75 s | canary HELD
+ rep 0 S1_missing_index  C4_twin_per_tenant  -> INCONCLUSIVE  decision in   1021 s | twin INCONCLUSIVE after 8 pair(s); target t_analytic/OLAP 0.126 [0.079, 0.203]; widest neighbour t_steady/OLTP 1.02 [0.78, 1.35]
+ rep 0 S9_no_change      C2_no_verification  -> APPLIED       decision in     65 s | canary HELD
+ rep 0 S9_no_change      C3_canary_only      -> APPLIED       decision in     80 s | canary HELD
+ rep 0 S9_no_change      C4_twin_per_tenant  -> INCONCLUSIVE  decision in   1016 s | twin INCONCLUSIVE after 8 pair(s); target t_steady/OLTP 1.102 [0.870, 1.395]; widest neighbour t_bursty/OLTP 1.05 [0.81, 1.35]
+ rep 1 S1_missing_index  C2_no_verification  -> APPLIED       decision in     70 s | canary HELD
+ rep 1 S1_missing_index  C3_canary_only      -> APPLIED       decision in     75 s | canary HELD
+ rep 1 S1_missing_index  C4_twin_per_tenant  -> INCONCLUSIVE  decision in   1031 s | twin INCONCLUSIVE after 8 pair(s); target t_analytic/OLAP 0.114 [0.083, 0.157]; widest neighbour t_bursty/OLTP 0.97 [0.65, 1.47]
+ rep 1 S9_no_change      C2_no_verification  -> APPLIED       decision in     75 s | canary HELD
+ rep 1 S9_no_change      C3_canary_only      -> APPLIED       decision in     80 s | canary HELD
+ rep 1 S9_no_change      C4_twin_per_tenant  -> INCONCLUSIVE  decision in   1021 s | twin INCONCLUSIVE after 8 pair(s); target t_steady/OLTP 1.045 [0.850, 1.285]; widest neighbour t_mixed/OLTP 1.03 [0.80, 1.34]
+ rep 2 S1_missing_index  C2_no_verification  -> APPLIED       decision in     80 s | canary HELD
+ rep 2 S1_missing_index  C3_canary_only      -> APPLIED       decision in     80 s | canary HELD
+ rep 2 S1_missing_index  C4_twin_per_tenant  -> INCONCLUSIVE  decision in   1031 s | twin INCONCLUSIVE after 8 pair(s); target t_analytic/OLAP 0.156 [0.099, 0.247]; widest neighbour t_mixed/OLTP 1.06 [0.76, 1.49]
+ rep 2 S9_no_change      C2_no_verification  -> APPLIED       decision in     75 s | canary HELD
+ rep 2 S9_no_change      C3_canary_only      -> ROLLED_BACK   decision in     60 s | canary ROLLED_BACK
+ rep 2 S9_no_change      C4_twin_per_tenant  -> INCONCLUSIVE  decision in   1066 s | twin INCONCLUSIVE after 8 pair(s); target t_steady/OLTP 0.984 [0.822, 1.177]; widest neighbour t_mixed/OLTP 0.97 [0.80, 1.19]
+
+== production ratio, live / mean(before, after), by scenario (trials that reached production) ==
+ S1_missing_index C2_no_verification: 3 trial(s)
+    t_analytic/OLAP    median 0.13  range 0.13-0.15  (n=3)
+    t_bursty/OLTP      median 0.97  range 0.96-1.01  (n=3)
+    t_mixed/OLAP       median 1.11  range 1.06-1.16  (n=2)
+    t_mixed/OLTP       median 0.96  range 0.94-1.01  (n=3)
+    t_steady/OLTP      median 0.98  range 0.95-0.98  (n=3)
+ S1_missing_index C3_canary_only: 3 trial(s)
+    t_analytic/OLAP    median 0.12  range 0.12-0.14  (n=3)
+    t_bursty/OLTP      median 1.01  range 0.96-1.03  (n=3)
+    t_mixed/OLAP       median 0.97  range 0.93-1.03  (n=3)
+    t_mixed/OLTP       median 0.97  range 0.96-1.00  (n=3)
+    t_steady/OLTP      median 0.99  range 0.95-1.02  (n=3)
+
+== twin ratio for each key, by scenario (C4 trials) ==
+ S1_missing_index: 3 trial(s); verdicts ['INCONCLUSIVE', 'INCONCLUSIVE', 'INCONCLUSIVE']; pairs [8, 8, 8]
+    t_analytic/OLAP    ratios [0.126, 0.114, 0.156]  intervals [[0.08, 0.2], [0.08, 0.16], [0.1, 0.25]]
+    t_bursty/OLTP      ratios [1.046, 0.975, 1.065]  intervals [[0.86, 1.27], [0.65, 1.47], [0.78, 1.45]]
+    t_mixed/OLAP       ratios [0.977, 1.002, 1.019]  intervals [[0.93, 1.03], [0.95, 1.06], [0.93, 1.11]]
+    t_mixed/OLTP       ratios [1.04, 1.015, 1.064]  intervals [[0.82, 1.31], [0.81, 1.27], [0.76, 1.49]]
+    t_steady/OLTP      ratios [1.025, 1.007, 1.051]  intervals [[0.78, 1.35], [0.69, 1.47], [0.79, 1.4]]
+ S9_no_change: 3 trial(s); verdicts ['INCONCLUSIVE', 'INCONCLUSIVE', 'INCONCLUSIVE']; pairs [8, 8, 8]
+    t_analytic/OLAP    ratios [0.99, 1.007, 0.965]  intervals [[0.92, 1.06], [0.93, 1.09], [0.85, 1.09]]
+    t_bursty/OLTP      ratios [1.047, 0.998, 0.928]  intervals [[0.81, 1.35], [0.81, 1.23], [0.77, 1.11]]
+    t_mixed/OLAP       ratios [0.983, 0.996, 0.976]  intervals [[0.89, 1.08], [0.93, 1.07], [0.81, 1.18]]
+    t_mixed/OLTP       ratios [1.078, 1.035, 0.973]  intervals [[0.9, 1.29], [0.8, 1.34], [0.8, 1.19]]
+    t_steady/OLTP      ratios [1.102, 1.045, 0.984]  intervals [[0.87, 1.4], [0.85, 1.28], [0.82, 1.18]]

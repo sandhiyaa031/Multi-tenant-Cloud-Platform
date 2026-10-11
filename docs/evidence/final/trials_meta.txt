@@ -1,0 +1,13 @@
+commit abc2e63381bad0495d26927e92171c5e89e2bef6
+started 2026-10-11T08:43:41Z
+TWIN_MAX_LOOKS=8
+COLLECT_INTERVAL_S=20
+TWIN_DELAY_S=60
+TWIN_WINDOW_S=55
+SEED_SCALE=0.3
+TWIN_REPETITIONS=1
+EVAL_RATE_SCALE=0.5
+EVAL_POOL_SIZE=8
+note: the first launch (attached) was stopped at 08:44:04Z before its first trial completed and relaunched detached as container final_trials with the same command; the matrix is resumable and no record was lost or repeated
+trials finished 2026-10-11T11:57Z (last record)
+power: one Kernel-Power 105 event that day before the run (08:36:59Z, charger connected); none between 08:43Z and 11:58Z

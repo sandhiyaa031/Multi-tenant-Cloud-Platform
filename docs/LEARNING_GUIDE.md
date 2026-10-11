@@ -5,6 +5,9 @@ in DBPilot, and how to explain it to a professor. Each section says whether the
 part is built and how far it has been verified; where something was written but
 not yet run for real, it says so.
 
+New to the project? Start with the [study guide](STUDY_GUIDE.md) and the
+[key concepts](KEY_CONCEPTS.md); this guide goes deeper into each technology.
+
 ---
 
 ## 1. PostgreSQL internals used — Built (control plane)
@@ -260,7 +263,7 @@ Two bugs were found by writing these tests. The clone was one transaction past
 T0 (above). And when the source had not replayed any transaction since it
 started, the freeze refused *after* pausing replay and never resumed it, so the
 source stopped following production and every later run refused for the same
-reason until the twin was restarted. The pilot trials in the README were run
+reason until the twin was restarted. The pilot trials in the project report (appendix A.5) were run
 before both fixes.
 
 **What has been observed so far (development machine, not an evaluation).**
@@ -519,6 +522,13 @@ with the mistake that taught it. The full account is in
   machine (duet benchmarking) makes them share the machine's moods. This
   project's twin does not do that yet; it is the first thing a continuation
   should change.
+- *A percentile needs samples.* The canary judges each 20-second window once it
+  holds five transactions of a class. A p95 over a handful of samples moves by
+  tens of percent by chance, and in the closing trials the canary rolled back a
+  change that did nothing because one low-traffic class read 1.27x in two
+  windows. The load generator, measuring the same tenant over the whole period,
+  saw 1.03x. A guard that fires on noise is the same mistake as the first gate,
+  in a different place.
 - *Know your instrument.* The laptop's speed followed its CPU frequency by
   5–24% under load, and its charger dropped out during runs. Neither showed in
   any operating-system warning; both showed in a fixed-work "speed canary" and in

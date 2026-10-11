@@ -84,6 +84,8 @@ sequences) and no decisive one either.
   partition's share, and rejected the index the demo is about.
 - The canary measures latency inside the database, so harm that is only queueing at the pooler (a one-connection cap)
   is invisible to it. This one is not fixed; it is stated.
+- The canary judges 20-second windows. For a class with a handful of queries per window its p95 is too unsteady: in
+  the closing trials it rolled back a change that did nothing, once in three (section 4, Part B). Not fixed; stated.
 
 ## 4. Closing evaluation
 
@@ -129,8 +131,62 @@ Full tables, per neighbour and with the stalled pair left out: [evidence/final/p
 
 ### Part B. Real trials through the loop
 
-Still running when this version of the report was committed. Its results will be added here, next to what the protocol
-said to expect, whatever they are.
+Two real changes, three ways of handling them, on the harness's own workload: the missing index for the analytical
+tenant and a change that does nothing (a statistics refresh); each with no verification, with a canary only, and with
+the twin and the per-tenant gate at a budget of 8 replay pairs; 3 repetitions of each. All 18 trials are valid: no
+harness error, replay errors at most 12 of about 22,500 transactions (0.05%), no change of power source during the run.
+
+| Change | Handling | Outcome (3 trials) | Time to decision |
+|---|---|---|---|
+| Missing index | No verification | Applied ×3 | 70 – 80 s |
+| Missing index | Canary only | Applied ×3, canary held | 75 – 80 s |
+| Missing index | Twin, per-tenant gate | **INCONCLUSIVE ×3**, not applied (8 pairs each) | 1,021 – 1,031 s |
+| No-op | No verification | Applied ×3 | 65 – 75 s |
+| No-op | Canary only | Applied ×2; **rolled back by the canary ×1** | 60 – 80 s |
+| No-op | Twin, per-tenant gate | **INCONCLUSIVE ×3**, not applied (8 pairs each) | 1,016 – 1,066 s |
+
+**The twin and production agree about the target of the index.**
+
+| `t_analytic/OLAP` p95 ratio | Values |
+|---|---|
+| Twin, treatment ÷ control (3 trials) | 0.126× [0.08, 0.20], 0.114× [0.08, 0.16], 0.156× [0.10, 0.25] |
+| Production, live ÷ mean(before, after) (6 trials, client side) | 0.12× to 0.15× |
+
+That is six production trials and three twin verdicts for one kind of action. It is encouraging; it is not a validation
+of the twin.
+
+**The twin could not show any neighbour unharmed.** For the index its neighbour ratios were 0.98× to 1.07×, with
+intervals as wide as 0.65 – 1.47. For the no-op, where the true ratio of every tenant is 1, the ratios were 0.93× to
+1.10× with intervals up to 0.81 – 1.35. Every one of the six verdicts was INCONCLUSIVE for that reason.
+
+**Production's own measurements are just as noisy.** With the index applied, OLTP classes sat at 0.94× to 1.03×. One
+class, `t_mixed/OLAP`, measured 1.06× to 1.16× in the unverified trials (two of the three had enough samples to measure it)
+and 0.93× to 1.03× in the canary trials, with the *same* change. The harness's 10% threshold flagged a tenant as "harmed" twice, once by the index and once by a statistics
+refresh. Neither is reported as a finding, as the protocol said in advance.
+
+**A finding that was not expected: the canary rolled back a change that did nothing.** In one no-op trial the canary saw
+`t_mixed/OLAP` at 1.27× its baseline against a contract of 1.15× in two of three windows and undid the statistics
+refresh. The load generator's own measurement of that tenant over the same period was 1.03×. The cause is how little the
+canary has to go on: a 20-second window holds only a handful of that tenant's analytical queries, and a p95 over a
+handful of samples moves by tens of percent by chance. So the canary's contract has a false-alarm rate on low-traffic
+classes that was not measured before, and one in three is all this run can say about it.
+
+**The aggregate gate on the same twin measurements** (recorded for comparison, deciding nothing): INCONCLUSIVE for the
+index all three times, and REJECT for no benefit for the no-op all three times, which is the correct decisive answer
+there. The per-tenant gate reached no decisive answer in any of the six.
+
+**Against what the protocol said to expect:**
+
+| Expectation, written before the run | Result |
+|---|---|
+| The index makes its target several times faster and no neighbour is consistently slower | Held |
+| The index under the twin ends INCONCLUSIVE with the target's benefit shown | Held, 3 of 3 |
+| The no-op under the twin ends INCONCLUSIVE or rejected for no benefit; never approved, never rejected for harm | Held, 3 of 3 |
+| (Nothing was stated about the canary) | A false rollback of a no-op, 1 of 3 |
+
+The twin gate cost about 17 minutes a verdict against about 75 seconds for a canary, and approved neither change.
+Records: [evidence/final/trials.jsonl](evidence/final/trials.jsonl); computed report:
+[evidence/final/trials_report.txt](evidence/final/trials_report.txt).
 
 ## 5. What has not been shown
 
@@ -139,7 +195,9 @@ said to expect, whatever they are.
   steady cores brings that down has not been measured; a protocol and runner for that measurement exist
   (`tools/aa/`) and were not run for want of a machine.
 - **That the twin catches a real harmful change.** None was found to catch.
-- **That the twin's prediction matches production in general.** There are a handful of pairs for one kind of action.
+- **That the twin's prediction matches production in general.** It matched for the benefit of one index (Part B);
+  nothing else was measured.
+- **How often the canary raises a false alarm.** It did once in three no-op trials; three trials do not give a rate.
 - **Anything about the LLM agent's proposals.** It has not been run against a live model.
 - **Rates with meaningful confidence intervals**, for anything.
 
@@ -174,5 +232,6 @@ instance. That is the absence of a result in a short search, not evidence that n
 3. Only if neighbours can then be shown unharmed in a practical number of pairs, run the scenario suite.
 4. Find a real cross-tenant harm before claiming anything about catching one. The honest candidates are contention for
    CPU once the row-security helpers are parallel-safe, and write-heavy tenants at the full-size dataset.
-5. Give the canary a measure of client-side waiting, or keep concurrency caps away from it.
+5. Give the canary a measure of client-side waiting, and longer windows or a minimum sample count that makes a p95
+   meaningful for low-traffic classes.
 6. Run the LLM agent against a live model and compare what it proposes with the rules.

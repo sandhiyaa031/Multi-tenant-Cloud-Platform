@@ -85,6 +85,8 @@ def main() -> None:
     directory, out = Path(sys.argv[1]), Path(sys.argv[2])
     out.mkdir(parents=True, exist_ok=True)
     load(directory)
+    if "--render" in sys.argv:  # write the table again from cells already computed
+        return render(json.loads((out / "power.json").read_text(encoding="utf-8"))["cells"], out)
     jobs = []
     for without in (None, 22):
         for target in ("t_analytic", "t_mixed"):
@@ -97,6 +99,10 @@ def main() -> None:
     (out / "power.json").write_text(json.dumps({"runs": len(RUNS), "benefit": BENEFIT, "orderings": ORDERINGS, "cells": cells}),
                                     encoding="utf-8")
 
+    render(cells, out)
+
+
+def render(cells: list[dict], out: Path) -> None:
     def pct(c: dict, key: str, n: int) -> str:
         return f"{100 * c.get(key, 0) / n:3.0f}"
 
@@ -108,6 +114,8 @@ def main() -> None:
         for target in ("t_analytic", "t_mixed"):
             for budget in BUDGETS:
                 rows = [c for c in cells if c["without_run"] == without and c["target"] == target and c["budget"] == budget]
+                if not rows or rows[0]["sequences"] == 0:
+                    continue  # fewer pairs than the budget (27 pairs cannot fill a group of 28)
                 lines.append(f"\ntarget {target}, budget {budget} pairs, {rows[0]['sequences']} sequences"
                              f"{'':8s}per-tenant gate: APP REJ-H REJ-NB INC   |   aggregate gate: APP REJ-H REJ-NB INC")
                 for c in sorted(rows, key=lambda c: (c["victim"] or "", c["harm"])):

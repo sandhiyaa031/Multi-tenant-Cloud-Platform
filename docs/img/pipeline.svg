@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 250" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <title>A proposal travelling through DBPilot's verification tiers</title>
+  <rect width="920" height="250" rx="14" fill="#0d1117"/>
+  <text x="30" y="30" fill="#e6edf3" font-size="15" font-weight="600">One proposal gets through. One does not.</text>
+
+  <!-- stages -->
+  <g font-size="13" text-anchor="middle">
+    <g fill="#161b22" stroke="#30363d" stroke-width="1.5">
+      <rect x="30" y="50" width="120" height="58" rx="9"/>
+      <rect x="178" y="50" width="120" height="58" rx="9"/>
+      <rect x="326" y="50" width="120" height="58" rx="9"/>
+      <rect x="474" y="50" width="120" height="58" rx="9" stroke="#d29922"/>
+      <rect x="622" y="50" width="120" height="58" rx="9"/>
+      <rect x="770" y="50" width="120" height="58" rx="9" stroke="#3fb950"/>
+    </g>
+    <g fill="#e6edf3" font-weight="600">
+      <text x="90" y="75">Proposer</text>
+      <text x="238" y="75">T0 · Rules</text>
+      <text x="386" y="75">T1 · What-if</text>
+      <text x="534" y="75">T2 · Digital twin</text>
+      <text x="682" y="75">T3 · Canary</text>
+      <text x="830" y="75">Production</text>
+    </g>
+    <g fill="#8b949e" font-size="11">
+      <text x="90" y="94">rules or LLM</text>
+      <text x="238" y="94">milliseconds</text>
+      <text x="386" y="94">seconds</text>
+      <text x="534" y="94">minutes, per tenant</text>
+      <text x="682" y="94">contract + rollback</text>
+      <text x="830" y="94">kept, undoable</text>
+    </g>
+  </g>
+
+  <!-- rail -->
+  <path d="M90 140 H830" stroke="#30363d" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <g stroke="#30363d" stroke-width="2">
+    <path d="M90 108 V140"/><path d="M238 108 V140"/><path d="M386 108 V140"/>
+    <path d="M534 108 V140"/><path d="M682 108 V140"/><path d="M830 108 V140"/>
+  </g>
+  <path d="M534 140 V190" stroke="#30363d" stroke-width="3" stroke-dasharray="4 5" fill="none"/>
+  <rect x="444" y="190" width="180" height="42" rx="9" fill="#161b22" stroke="#f85149" stroke-width="1.5"/>
+  <text x="534" y="208" fill="#e6edf3" font-size="12" font-weight="600" text-anchor="middle">Not applied</text>
+  <text x="534" y="223" fill="#8b949e" font-size="11" text-anchor="middle">rejected, or uncertain = not safe</text>
+
+  <!-- the proposal that passes -->
+  <circle r="9" fill="#3fb950">
+    <animateMotion dur="8s" repeatCount="indefinite" path="M90 140 H830" keyPoints="0;0.2;0.4;0.6;0.8;1;1" keyTimes="0;0.1;0.25;0.5;0.7;0.85;1" calcMode="linear"/>
+    <animate attributeName="opacity" dur="8s" repeatCount="indefinite" values="1;1;0" keyTimes="0;0.93;1"/>
+  </circle>
+  <!-- the proposal that does not -->
+  <circle r="9" fill="#f85149">
+    <animateMotion dur="8s" begin="2s" repeatCount="indefinite" path="M90 140 H534 V205" keyPoints="0;0.3;0.6;0.9;0.9;1;1" keyTimes="0;0.1;0.25;0.4;0.65;0.75;1" calcMode="linear"/>
+    <animate attributeName="opacity" dur="8s" begin="2s" repeatCount="indefinite" values="1;1;0" keyTimes="0;0.9;1"/>
+  </circle>
+
+  <g font-size="11" fill="#8b949e">
+    <circle cx="660" cy="205" r="6" fill="#3fb950"/><text x="672" y="209">helps its tenant, neighbours shown unharmed</text>
+    <circle cx="660" cy="225" r="6" fill="#f85149"/><text x="672" y="229">harm shown, or nothing could be shown</text>
+  </g>
+</svg>

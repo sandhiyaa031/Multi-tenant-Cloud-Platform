@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 330" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+<title>Twin verdict for the missing index: ratio and interval per tenant</title>
+<rect width="920" height="330" rx="14" fill="#0d1117"/>
+<text x="30" y="32" fill="#e6edf3" font-size="15" font-weight="600">The demo verdict: p95 latency, treatment / control, after 8 replay pairs</text>
+<path d="M227.8 62 V268" stroke="#21262d"/>
+<text x="227.8" y="56" fill="#8b949e" font-size="11" text-anchor="middle">0.05x</text>
+<path d="M314.3 62 V268" stroke="#21262d"/>
+<text x="314.3" y="56" fill="#8b949e" font-size="11" text-anchor="middle">0.1x</text>
+<path d="M400.7 62 V268" stroke="#21262d"/>
+<text x="400.7" y="56" fill="#8b949e" font-size="11" text-anchor="middle">0.2x</text>
+<path d="M515.0 62 V268" stroke="#21262d"/>
+<text x="515.0" y="56" fill="#8b949e" font-size="11" text-anchor="middle">0.5x</text>
+<path d="M601.4 62 V268" stroke="#21262d"/>
+<text x="601.4" y="56" fill="#8b949e" font-size="11" text-anchor="middle">1x</text>
+<path d="M652.0 62 V268" stroke="#21262d"/>
+<text x="652.0" y="56" fill="#8b949e" font-size="11" text-anchor="middle">1.5x</text>
+<path d="M588.3 62 V268" stroke="#3fb950" stroke-dasharray="5 4"/>
+<path d="M607.5 62 V268" stroke="#f85149" stroke-dasharray="5 4"/>
+<text x="582.3" y="286" fill="#3fb950" font-size="11" text-anchor="end">target must end left of 0.90x</text>
+<text x="613.5" y="286" fill="#f85149" font-size="11">neighbours must end left of 1.05x</text>
+<text x="30" y="92" fill="#e6edf3" font-size="13">t_analytic/OLAP  (target)</text>
+<path d="M314.3 88 H314.3" stroke="#3fb950" stroke-width="4" stroke-linecap="round"><animate attributeName="d" dur="10s" repeatCount="indefinite" keyTimes="0;0.04;0.14;0.95;1" values="M314.3 88 H314.3;M314.3 88 H314.3;M227.8 88 H406.8;M227.8 88 H406.8;M314.3 88 H314.3"/></path>
+<circle cx="314.3" cy="88" r="6" fill="#3fb950" stroke="#0d1117" stroke-width="2"/>
+<text x="678" y="92" fill="#8b949e" font-size="12">0.10x [0.05, 0.21]  benefit shown</text>
+<text x="30" y="134" fill="#e6edf3" font-size="13">t_bursty/OLTP</text>
+<path d="M601.4 130 H601.4" stroke="#d29922" stroke-width="4" stroke-linecap="round"><animate attributeName="d" dur="10s" repeatCount="indefinite" keyTimes="0;0.12;0.22;0.95;1" values="M601.4 130 H601.4;M601.4 130 H601.4;M568.8 130 H633.1;M568.8 130 H633.1;M601.4 130 H601.4"/></path>
+<circle cx="601.4" cy="130" r="6" fill="#d29922" stroke="#0d1117" stroke-width="2"/>
+<text x="678" y="134" fill="#8b949e" font-size="12">1.00x [0.77, 1.29]  uncertain</text>
+<text x="30" y="176" fill="#e6edf3" font-size="13">t_mixed/OLAP</text>
+<path d="M595.0 172 H595.0" stroke="#d29922" stroke-width="4" stroke-linecap="round"><animate attributeName="d" dur="10s" repeatCount="indefinite" keyTimes="0;0.20;0.30;0.95;1" values="M595.0 172 H595.0;M595.0 172 H595.0;M567.2 172 H623.1;M567.2 172 H623.1;M595.0 172 H595.0"/></path>
+<circle cx="595.0" cy="172" r="6" fill="#d29922" stroke="#0d1117" stroke-width="2"/>
+<text x="678" y="176" fill="#8b949e" font-size="12">0.95x [0.76, 1.19]  uncertain</text>
+<text x="30" y="218" fill="#e6edf3" font-size="13">t_mixed/OLTP</text>
+<path d="M588.3 214 H588.3" stroke="#d29922" stroke-width="4" stroke-linecap="round"><animate attributeName="d" dur="10s" repeatCount="indefinite" keyTimes="0;0.28;0.38;0.95;1" values="M588.3 214 H588.3;M588.3 214 H588.3;M543.8 214 H634.1;M543.8 214 H634.1;M588.3 214 H588.3"/></path>
+<circle cx="588.3" cy="214" r="6" fill="#d29922" stroke="#0d1117" stroke-width="2"/>
+<text x="678" y="218" fill="#8b949e" font-size="12">0.90x [0.63, 1.30]  uncertain</text>
+<text x="30" y="260" fill="#e6edf3" font-size="13">t_steady/OLTP</text>
+<path d="M591.0 256 H591.0" stroke="#d29922" stroke-width="4" stroke-linecap="round"><animate attributeName="d" dur="10s" repeatCount="indefinite" keyTimes="0;0.36;0.46;0.95;1" values="M591.0 256 H591.0;M591.0 256 H591.0;M553.3 256 H630.2;M553.3 256 H630.2;M591.0 256 H591.0"/></path>
+<circle cx="591.0" cy="256" r="6" fill="#d29922" stroke="#0d1117" stroke-width="2"/>
+<text x="678" y="260" fill="#8b949e" font-size="12">0.92x [0.68, 1.26]  uncertain</text>
+<text x="30" y="312" fill="#8b949e" font-size="11">Log scale. Every neighbour interval crosses the red line, so no neighbour is shown unharmed: verdict INCONCLUSIVE, change not applied.</text>
+</svg>

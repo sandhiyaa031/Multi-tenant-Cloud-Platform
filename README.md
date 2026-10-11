@@ -1,47 +1,129 @@
-# DBPilot
+<div align="center">
 
-**Safe, tenant-aware autonomous optimisation for shared PostgreSQL.**
+# 🧭 DBPilot
 
-DBPilot is a control plane for a PostgreSQL cluster that many tenants share. An
-AI agent watches the cluster and proposes optimisations. DBPilot does not trust
-those proposals: it measures each one on a real clone of the database, under a
-replay of the real workload, for every tenant, and applies it only when the
-tenant it is meant to help benefits **and no other tenant is harmed**.
+### Safe, tenant-aware autonomous optimisation for shared PostgreSQL
 
+*An AI may suggest. A clone gets to find out. Production only hears about it afterwards.*
+
+**Project report** · PostgreSQL 18 · FastAPI · React · Docker Compose · 275 automated tests + browser end-to-end tests
+
+</div>
 
 ---
 
 ## Contents
 
-1. [The problem](#1-the-problem)
-2. [The idea](#2-the-idea)
-3. [Architecture](#3-architecture)
-4. [Multi-tenancy model](#4-multi-tenancy-model)
-5. [Control plane](#5-control-plane)
-6. [Data plane](#6-data-plane)
-7. [Workload driver](#7-workload-driver)
-8. [Telemetry](#8-telemetry)
-9. [Agent and action space](#9-agent-and-action-space)
-10. [Digital twin](#10-digital-twin)
-11. [Verification engine](#11-verification-engine)
-12. [Canary and rollback](#12-canary-and-rollback)
-13. [Learning loop](#13-learning-loop)
-14. [Security model](#14-security-model)
-15. [Technology stack](#15-technology-stack)
-16. [Getting started](#16-getting-started)
-17. [API overview](#17-api-overview)
-18. [Testing](#18-testing)
-19. [Repository layout](#19-repository-layout)
-20. [Implementation status](#20-implementation-status)
-21. [Research context](#21-research-context)
+1. [Abstract](#1-abstract)
+2. [Introduction](#2-introduction)
+3. [Problem statement, and a Tuesday it would have saved](#3-problem-statement-and-a-tuesday-it-would-have-saved)
+4. [Methodology](#4-methodology) — architecture, tenancy, the digital twin, the safety gate, the canary
+5. [Results](#5-results) — what worked, what broke, what the numbers say
+6. [Discussion and limitations](#6-discussion-and-limitations)
+7. [Conclusion](#7-conclusion)
+8. [References](#8-references)
+9. [Appendix: run it yourself](#9-appendix-run-it-yourself) — setup, demo walkthrough, API, tests, repository layout, status
+
+> **How to read the numbers in this report.** Everything was measured on one development laptop, which
+> [turned out to be a poor measuring instrument](#54-the-laptop-is-not-a-measuring-instrument). Nothing here is a claim
+> about how DBPilot performs in general. Where a result is negative, it is reported as negative. Raw outputs and the
+> protocols they were run under (written before each run) are in [docs/evidence](docs/evidence/README.md); the short
+> closing report is [docs/REPORT.md](docs/REPORT.md).
 
 ---
 
-## 1. The problem
+## 1. Abstract
 
-Software-as-a-service products usually keep many customers ("tenants") in one
-PostgreSQL instance, because one instance per customer is expensive. Sharing
-creates a tuning problem that single-database tuning does not have:
+Software-as-a-service products commonly keep many customers ("tenants") in one PostgreSQL instance. A tuning change that
+helps one tenant, such as an index, more memory or more parallel workers, can slow another, and judged on the workload
+as a whole it can still look like a win. Language-model agents now propose such changes fluently, and the published
+systems that use them are evaluated on aggregate metrics.
+
+**DBPilot** is a control plane that treats every proposed change as a hypothesis. A proposer (fixed rules or an LLM
+agent) may only choose from a closed set of typed actions. Each proposal then passes four tiers, cheapest first: static
+rules, a planner what-if, a replay of captured production workload on a clone of the database (a *digital twin*) judged
+**per tenant**, and a canary in production with automatic rollback. The per-tenant gate approves a change only when the
+tenant it targets is *shown* to benefit and every other tenant is *shown* not to be harmed; anything uncertain is treated
+as not safe.
+
+The system is built and tested end to end: 275 automated tests, and browser tests that drive the whole loop on a running
+stack, including a harmful change that the canary undid by itself when a tenant's p95 latency reached 3.69× its baseline
+against a contract of 1.15×.
+
+The measurements are more sobering, and more interesting, than the build:
+
+- An A/A experiment (30 twin runs with *identical* arms) showed the first version of the gate declaring harm that did not
+  exist in 2 of 9 verdicts. The gate was redesigned once, on that evidence, to judge replay *pairs*; on the same data it
+  makes no false call (0 of 3,400 reordered sequences).
+- With a slowdown of known size injected into real no-action replays, an **aggregate gate approved a change that slowed
+  one neighbour by 20% in 20–43% of sequences**; the **per-tenant gate approved none**, and rejected 83–92% of 50%
+  slowdowns given eight or more replay pairs.
+- On a laptop, the per-tenant gate's caution has a price: it approved nothing at all, the harmless change included.
+  Identical arms differ by 5–12% from pair to pair there, so no neighbour can be shown unharmed at a 5% margin in a
+  practical number of replays.
+
+No real change was found that harms a neighbour on this stack, so the twin has not been shown to catch one, and the LLM
+agent has not been run against a live model. Both are stated as open, with the reasons.
+
+## 2. Introduction
+
+Database tuning used to be a person's job: a DBA who knew which index the reporting team would ask for next and which
+setting had bitten them in 2019. Two things have changed.
+
+First, **databases are shared**. One PostgreSQL instance per customer is expensive, so SaaS products put many customers
+in one instance and separate them by role, row-level security or schema. The instance has one buffer cache, one set of
+CPU cores, one write-ahead log, and one set of settings. Its tenants are neighbours in the full sense of the word.
+
+Second, **the tuner is increasingly a machine**. Cloud providers recommend and apply indexes automatically
+[[1]](#ref1), safe online tuners adjust live configurations [[2]](#ref2), and LLM-based systems read the manual and
+propose settings [[3]](#ref3) [[4]](#ref4). These work, and they are evaluated the way single-database tuning has
+always been evaluated: on one workload, by one aggregate number.
+
+Put the two together and a gap appears. In a shared instance the aggregate can improve while one tenant gets worse, and
+an average is a good place to hide a victim. A confident proposal from a language model does not change that; it only
+makes the proposal arrive faster and sound better.
+
+DBPilot's research question:
+
+> Can an autonomous system safely optimise a shared multi-tenant PostgreSQL cluster by verifying each AI-proposed
+> change in a digital twin, **per tenant**, before it reaches production? And what does that add over judging the
+> workload as a whole, or over a canary alone?
+
+**What this project contributes**
+
+| | Contribution | Where |
+|---|---|---|
+| 🏗️ | A working three-plane system: control plane, multi-tenant data plane, experimentation plane with a real-clone digital twin | [§4](#4-methodology) |
+| 🔒 | A closed, typed action space with stored inverses, so an agent can never run SQL and every change can be undone | [§4.8](#48-agent-and-action-space) |
+| ⚖️ | A per-tenant safety gate built on replay pairs, with an aggregate gate as the comparison point | [§4.10](#410-verification-engine) |
+| 🧪 | An honest account of validating that gate: an A/A experiment that caught it lying, the redesign, and a semi-synthetic power analysis | [§5](#5-results) |
+| 📉 | Negative results worth having: why no "trap" scenario harmed a neighbour, and why a laptop cannot referee a 5% margin | [§5.4](#54-the-laptop-is-not-a-measuring-instrument), [§5.7](#57-things-that-went-wrong-and-what-they-taught) |
+
+**What it does not claim.** Validating a change before applying it and reverting on regression is established practice
+[[1]](#ref1) [[9]](#ref9); replaying captured workload on a test system is too [[10]](#ref10). DBPilot's twin is that
+idea, not a new one. What the project set out to add is the per-tenant judgement in a shared instance, and its
+measurement.
+
+## 3. Problem statement, and a Tuesday it would have saved
+
+### 3.1 Problem statement
+
+Given one PostgreSQL instance shared by tenants *t₁ … tₙ*, each with latency objectives, and a stream of proposed
+changes, each intended to help one tenant:
+
+> **Apply a change only if** the target tenant's latency is shown to improve by a meaningful margin **and** no other
+> tenant's latency is shown, or cannot be ruled out, to get worse by more than a small margin, **and** be able to undo
+> it if production disagrees.
+
+Three things make this harder than it sounds:
+
+| Difficulty | Why |
+|---|---|
+| **Changes leak between tenants** | The tenants share memory, CPU, the log and (for instance-level settings) the configuration itself |
+| **"No harm seen" is not "no harm"** | Failing to detect a slowdown in a noisy measurement proves nothing. Safety has to be *shown* (a non-inferiority test [[13]](#ref13)), which needs far more evidence than spotting a big win |
+| **The proposer cannot be trusted to grade itself** | An LLM's explanation of why its change is safe is text, not a measurement |
+
+Typical ways a change helps one tenant and hurts the rest:
 
 | A change that helps one tenant… | …can hurt the others |
 |---|---|
@@ -50,18 +132,70 @@ creates a tuning problem that single-database tuning does not have:
 | More parallel workers per query | Fewer CPU cores for latency-sensitive transactions |
 | Sending reports to a read replica | Stale results, or cancelled queries when the replica lags |
 
-Language-model agents can now propose such changes convincingly. Published LLM
-tuning systems are evaluated on one workload with one aggregate number
-(throughput). In a shared instance the aggregate can improve while one tenant
-gets worse, and nobody notices until that tenant complains.
+### 3.2 A scenario
 
-DBPilot's question:
+*This story is an illustration. The company is invented; the mechanism is the one the project is about. What actually
+happened when we measured it is in [Results](#5-results), and it is less tidy.*
 
-> Can an autonomous system safely optimise a shared multi-tenant PostgreSQL
-> cluster by verifying each AI-proposed change in a digital twin, per tenant,
-> before it reaches production?
+**Tuesday, 02:13.** *Parcelly* sells a logistics platform. Four of its customers share one PostgreSQL instance:
 
-## 2. The idea
+| Tenant | What they do all day | What they care about |
+|---|---|---|
+| `t_steady` | Checkout: small transactions, constantly | 99% of requests under 100 ms |
+| `t_bursty` | Flash sales: quiet, then six times the traffic | 99% under 150 ms |
+| `t_analytic` | Dashboards: big reads over order lines | 95% under 2 s |
+| `t_mixed` | A bit of everything | Both of the above |
+
+`t_analytic`'s dashboards have become slow. The tuning agent notices a query filtering `order_line` by item with no index
+to help it, and proposes one. It is right: the dashboards get about ten times faster.
+
+**Without DBPilot.** The index goes on. The overall numbers look wonderful, because a ten-times win on heavy queries
+outweighs almost anything in the total. Meanwhile every order line that `t_steady` writes now maintains one more index,
+during a flash sale, and checkout slips past its 100 ms objective. The dashboard in the morning meeting is green. The
+support ticket from `t_steady` arrives on Thursday.
+
+**With DBPilot.**
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant AG as Proposer (rules or LLM)
+    participant VE as Verification engine
+    participant TW as Digital twin
+    participant OP as Operator
+    participant PR as Production
+    AG->>VE: Typed action: create index on order_line(ol_i_id) for t_analytic
+    VE->>VE: T0 static rules: valid, in bounds, not a duplicate
+    VE->>TW: T1 what-if: would the planner use it? (hypothetical index)
+    TW-->>VE: Yes, cost falls for 2 of 15 observed queries
+    VE->>TW: T2 replay the last minutes of real workload on two clones
+    Note over TW: control clone: as production<br/>treatment clone: with the index<br/>same transactions, same tenants, same timing
+    TW-->>VE: Latency per tenant, both arms, pair after pair
+    VE->>VE: Gate: target shown faster? every neighbour shown unharmed?
+    alt harm shown for a neighbour
+        VE-->>OP: REJECTED, with the tenant and the interval
+    else neighbours not shown safe
+        VE-->>OP: INCONCLUSIVE: not applied, a person decides
+    else all shown
+        VE->>PR: T3 canary under a contract
+        PR-->>VE: p95 per tenant, every window
+        VE->>PR: keep it, or run the stored inverse
+    end
+```
+
+The difference is in step 7. An aggregate judgement asks "did the instance get faster?". DBPilot asks that question once
+per tenant, and it asks it as "can you *show* me nobody got hurt?", which is a much less comfortable question.
+
+<div align="center">
+<img src="docs/img/pipeline.svg" alt="Animation: one proposal passes every tier into production, another is stopped at the digital twin" width="900">
+</div>
+
+## 4. Methodology
+
+The method is a pipeline in which evidence gets more expensive and more trustworthy at each step, and in which the
+component that proposes is never the component that approves.
+
+### 4.1 The loop and its four rules
 
 ```mermaid
 flowchart LR
@@ -85,7 +219,7 @@ Four rules hold everywhere:
 4. **Uncertain is not safe.** A result that cannot be distinguished from harm is
    not approved.
 
-## 3. Architecture
+### 4.2 Architecture
 
 DBPilot is split into three planes so that experimentation can never disturb
 what it is measuring.
@@ -145,7 +279,7 @@ In development all three run on one machine under Docker Compose, pinned to
 disjoint CPU cores. For evaluation and cloud deployment the design places each
 plane on its own node, with the experimentation node reserved for twin work.
 
-## 4. Multi-tenancy model
+### 4.3 Multi-tenancy model
 
 Tenants share one database and the same tables. Three mechanisms keep them
 apart and make them individually observable:
@@ -181,11 +315,11 @@ flowchart TB
   (`EXPLAIN` shows `Subplans Removed: 3`), and an index can be built for one
   tenant alone.
 
-## 5. Control plane
+### 4.4 Control plane
 
 A FastAPI service over its own PostgreSQL database.
 
-### Data model
+#### Data model
 
 ```mermaid
 erDiagram
@@ -233,7 +367,7 @@ An **organization** is a DBPilot customer. It owns **clusters** (managed
 PostgreSQL deployments), each hosting **tenants** (the customer's own
 customers) with **SLOs** (for example "99% of OLTP requests under 100 ms").
 
-### Database concepts in use
+#### Database concepts in use
 
 | Concept | Where | What it guarantees |
 |---|---|---|
@@ -249,7 +383,7 @@ customers) with **SLOs** (for example "99% of OLTP requests under 100 ms").
 | Declarative partitioning | `cp.query_stats` by day | Old telemetry is dropped by partition; recent queries read recent partitions only |
 | Keyset pagination on an index | audit API | Constant-time paging however deep |
 
-### Request path
+#### Request path
 
 ```mermaid
 sequenceDiagram
@@ -270,7 +404,7 @@ sequenceDiagram
 The role is read from the database on every request, not stored in the token,
 so demoting or removing a member takes effect immediately.
 
-## 6. Data plane
+### 4.5 Data plane
 
 | Component | Role |
 |---|---|
@@ -295,7 +429,7 @@ looks up each one's SCRAM verifier through a database function that answers
 only for tenant roles. The database owner and service roles cannot be reached
 through the pooler at all.
 
-## 7. Workload driver
+### 4.6 Workload driver
 
 A tenant-aware load generator that connects through PgBouncer as each tenant.
 
@@ -314,7 +448,7 @@ A tenant-aware load generator that connects through PgBouncer as each tenant.
   dropped arrivals for every tenant and class. This is the client-side ground
   truth used for evaluation, kept separate from what DBPilot itself observes.
 
-## 8. Telemetry
+### 4.7 Telemetry
 
 ```mermaid
 flowchart LR
@@ -351,7 +485,7 @@ that can append telemetry but cannot read users, memberships or the audit log.
 Capturing every statement is expensive (about 75 MB of log per minute at the
 development workload). Its effect on latency has not been measured yet.
 
-## 9. Agent and action space
+### 4.8 Agent and action space
 
 Two proposers share one interface and one set of observations, so that a
 comparison between them isolates the reasoning:
@@ -390,7 +524,7 @@ Every tool call the agent makes is stored with its proposal and shown in the
 Agent Console. The agent loop is tested against a scripted model; it has not
 yet been run against the live model API in this project.
 
-## 10. Digital twin
+### 4.9 Digital twin
 
 The twin is a real PostgreSQL instance, not a simulation.
 
@@ -426,7 +560,7 @@ flowchart LR
 The twin node agent also answers planner what-if questions (hypothetical
 indexes via HypoPG) and produces execution plans, both on the twin source.
 
-## 11. Verification engine
+### 4.10 Verification engine
 
 Four tiers, cheapest first. A proposal stops at the first tier that rejects it.
 
@@ -451,12 +585,12 @@ arms differing by 5–12% from pair to pair on the development laptop.
 | Benefit shown | Target's whole interval below 0.90 | Required for approval |
 | Unharmed | Another tenant's whole interval below 1.05 | Required for every other tenant |
 | Harm shown | A tenant's whole interval above 1.05, or an objective it was meeting is broken, and seen both with the treatment arm running first and with it running second | Reject |
-| Uncertain | Interval straddles a limit, or too few samples | Replay another window; still uncertain after three: inconclusive, escalated, never applied automatically |
+| Uncertain | Interval straddles a limit, or too few samples | Replay another pair; still uncertain when the budget (`TWIN_MAX_LOOKS`, 3 by default, 8 on the laptop profile) is spent: inconclusive, escalated, never applied automatically |
 
 **More evidence instead of a guess.** When the verdict is uncertain, the engine
-replays a fresh window and judges all windows together, up to three. Looking
+replays a fresh window and judges all pairs together, up to the budget. Looking
 several times would raise the chance of a false "safe", so each look is tested
-at a third of the error rate. Every twin-verified proposal also records what
+at the error rate divided by the number of looks allowed. Every twin-verified proposal also records what
 the other gate mode would have decided on the same measurements; that second
 verdict decides nothing and exists for comparison.
 
@@ -489,7 +623,7 @@ stateDiagram-v2
     ROLLBACK_REQUESTED --> ROLLED_BACK
 ```
 
-## 12. Canary and rollback
+### 4.11 Canary and rollback
 
 1. **Baseline.** Each tenant's p95 in the collector windows just before the change.
 2. **Apply** with the executor; the statements and their inverse are stored.
@@ -516,7 +650,7 @@ attributed. If the engine restarts and finds a change in canary, it rolls it
 back: a change nobody was watching is treated as unsafe. An operator can also
 roll back an applied change later; the stored inverse is used.
 
-## 13. Learning loop
+### 4.12 Learning loop
 
 Every proposal leaves one record: proposal → verification steps → twin
 prediction per tenant → canary observations → production result. A database
@@ -527,10 +661,10 @@ the direction production then showed. The agent can read the ledger through its
 history tool.
 
 The engine reads the ledger to set the canary tolerance per action type (see
-section 12). A learned model that predicts rejection is a later step that needs
+§4.11). A learned model that predicts rejection is a later step that needs
 far more history.
 
-## 14. Security model
+### 4.13 Security model
 
 | Concern | Mechanism |
 |---|---|
@@ -547,7 +681,7 @@ far more history.
 | Executor | Logs in to the data plane as `dbpilot_executor`: not a superuser, `ALTER SYSTEM` on allowlisted parameters only, ADMIN on tenant roles only, and an event trigger refuses all DDL from it except `CREATE INDEX` and `DROP INDEX`. Limit: PostgreSQL has no privilege narrower than table ownership for building an index, so as a member of the owning role it could read or change rows |
 | Secrets | Environment variables from an untracked `.env`; nothing hard-coded |
 
-## 15. Technology stack
+### 4.14 Technology stack
 
 | Technology | Used for | Why this one |
 |---|---|---|
@@ -555,7 +689,7 @@ far more history.
 | `pg_stat_statements`, `pg_prewarm`, HypoPG | Per-tenant statistics, equal cache state on clones, planner what-if | Statistics keyed by role; test an index without building it |
 | PgBouncer | Pooling, tenant-only login | The single door tenants use |
 | FastAPI + psycopg 3 | API, collector, engine, twin node agent | Typed and async; SQL written by hand so the database features are visible |
-| NumPy | Bootstrap confidence intervals in the gate | The statistics are simple enough not to need more |
+| NumPy | Percentiles in the gate (the t interval is a few lines of its own) | The statistics are simple enough not to need more |
 | Anthropic SDK (tool calling) | The LLM agent | Structured tool use; no agent framework |
 | React + TypeScript + Recharts | Control-plane UI | An authenticated single-page app; no server rendering needed |
 | Docker Compose | Running all three planes on one machine | One command reproduces every service and version |
@@ -565,7 +699,334 @@ far more history.
 Deliberately not used: vector databases, agent frameworks, message queues.
 Not yet added: Prometheus for host and container metrics.
 
-## 16. Getting started
+## 5. Results
+
+The short version, before the long one:
+
+| Question | Answer | Kind of evidence |
+|---|---|---|
+| Does the system exist and work end to end? | **Yes** | 275 automated tests, browser tests on the running stack |
+| Does the canary undo a harmful change by itself? | **Yes**, observed live | Browser test, one mechanism |
+| Was the first safety gate trustworthy? | **No.** It reported harm between identical arms | A/A experiment, 28 valid runs |
+| Is the redesigned gate trustworthy? | It makes **no false call** on the same data | Offline re-judgement, no new measurement |
+| Does judging per tenant matter? | **Yes, under injected harm**: the aggregate gate approves what the per-tenant gate refuses | Semi-synthetic: real noise, synthetic effect |
+| Can the per-tenant gate approve a safe change on a laptop? | **No.** It approved nothing | Same analysis, and real trials |
+| Did the twin catch a real harmful change? | **Not shown.** None was found to catch | — |
+| Is the LLM agent any good? | **Not shown.** Never run against a live model | — |
+
+### 5.1 What is built and tested
+
+```mermaid
+pie showData title Automated tests by suite (275)
+    "Control plane, gate and engine" : 172
+    "Twin node agent" : 47
+    "Data plane" : 36
+    "Workload driver and harness" : 20
+```
+
+Tests run inside containers against real PostgreSQL instances, not mocks. A few of the things they prove: a VIEWER cannot
+write even with raw SQL; organizations cannot see each other; the audit log cannot be altered, not even by the database
+owner; no code path takes a proposal to production without verification; a tenant cannot reach another tenant's
+partition; a clone is a standalone database at exactly the frozen moment; an agent's out-of-space output is bounced back,
+not executed. The full table is in the [appendix](#a3-testing).
+
+### 5.2 The loop, closed, in a browser
+
+Three browser scenarios drive the running stack with a live demo workload:
+
+| Scenario | What happened |
+|---|---|
+| A change under a canary | Applied, watched, kept, then rolled back on request with its stored inverse |
+| The full loop through the twin | Proposal → static rules → planner what-if → 8 replay pairs → **INCONCLUSIVE** → an admin's recorded override → canary held → applied → rolled back |
+| A harmful change | Dropping an index a tenant depends on. The canary saw that tenant's p95 at **3.69×** its baseline against a contract of **1.15×** and ran the inverse with nobody asking |
+
+The twin verdict for the demo's missing index, exactly as the console shows it:
+
+<div align="center">
+<img src="docs/img/verdict.svg" alt="Animation: ratio and interval per tenant for the demo index; the target is clearly faster, every neighbour's interval crosses the 1.05x limit" width="900">
+</div>
+
+| Tenant / class | Control p95 | Treatment p95 | Ratio | Interval | Finding |
+|---|---|---|---|---|---|
+| `t_analytic/OLAP` (target) | 35.7 ms | 3.79 ms | 0.10× | 0.05 – 0.21 | Benefit shown |
+| `t_bursty/OLTP` | 20.1 ms | 20.1 ms | 1.00× | 0.77 – 1.29 | Uncertain |
+| `t_mixed/OLAP` | 516.9 ms | 513.9 ms | 0.95× | 0.76 – 1.19 | Uncertain |
+| `t_mixed/OLTP` | 20.5 ms | 19.7 ms | 0.90× | 0.63 – 1.30 | Uncertain |
+| `t_steady/OLTP` | 20.3 ms | 19.0 ms | 0.92× | 0.68 – 1.26 | Uncertain |
+
+11,109 captured transactions, 8 replay pairs of 55 s, 4 replay errors, about 17 minutes. The target is unmistakably
+faster. Every neighbour *looks* fine, and none can be *shown* fine: each interval reaches past 1.05×. With three pairs
+instead of eight, even the target was uncertain (0.14×, interval 0.02 – 1.16). Verdict: inconclusive, not applied.
+
+<details>
+<summary><b>Screenshot: the proposal page in the console</b> (click to expand)</summary>
+
+<img src="docs/img/console-twin-verdict.png" alt="DBPilot console: lifecycle stepper, verification tiers, and the digital twin result with per-tenant intervals and per-pair ratios" width="900">
+
+</details>
+
+### 5.3 The gate that cried wolf (A/A experiment E1)
+
+An A/A test gives both arms the *same* treatment: nothing. Any difference the system reports is its own invention
+[[14]](#ref14). Thirty no-action twin runs were made under a protocol frozen and hashed beforehand; 28 were valid.
+
+| | Gate v1: bootstrap over time buckets inside a replay | Gate v2: Student's t over replay pairs |
+|---|---|---|
+| False "harm shown" with identical arms | **2 of 9 verdicts** | **0 of 3,400** reordered sequences |
+| Correct decisive verdict | 0 of 9 | 0 (inconclusive at 3, 5, 9, 14 and 28 pairs) |
+| What its interval measures | Scatter of requests within one replay | Disagreement between pairs |
+| What it cannot see | That two arms run one after the other differ by themselves | — |
+
+The numbers behind it: run-to-run variation of the p95 ratio was **1.2 to 13.5 times** what gate v1's interval assumed.
+Identical arms differed by −18% to +26% in typical request latency, and the tenants drifted *together*, which is what a
+machine changing speed between two sequential replays looks like.
+
+The redesign (made once, on this evidence, and then frozen):
+
+- the unit of evidence is the **replay pair**; one pair decides nothing;
+- the interval is Student's t on the logarithm of each pair's ratio, so its width comes from how much the pairs disagree;
+- **harm must replicate with each arm having run first**, so "whoever goes second is slower" cannot pass as harm;
+- a bootstrap over pairs was tried and rejected: with three pairs its nominal 95% interval covered the truth 75% of the
+  time on the A/A data.
+
+Gate v2 is honest. It is also, on this machine, unable to say yes; see below.
+
+### 5.4 The laptop is not a measuring instrument
+
+| Observation | Value |
+|---|---|
+| Speed variation under sustained load (synthetic CPU soak, database idle) | **5 – 24%**, following CPU frequency, with no operating-system indicator of a limit |
+| CPU used by the *same* workload profile in different sessions | 220% to 396% of a core |
+| Identical twin arms, pair to pair | **5 – 12%** apart |
+| Charger drop-outs during runs | Several; they line up to the second with the anomalies they caused |
+
+A gate with a 5% margin is being asked to hear a whisper at a concert. Showing a neighbour unharmed at that margin would
+take tens to a hundred replay pairs here; a verdict with eight already takes 17 minutes.
+
+### 5.5 What each gate decides when the harm is known (semi-synthetic)
+
+No real change was found that harms a neighbour (see [§5.7](#57-things-that-went-wrong-and-what-they-taught)), so the
+decision rule was examined another way. Into the 28 real no-action replay pairs, a slowdown of known size was injected
+into one neighbouring tenant's class in the treatment arm, and the target's class was made faster by the factor the demo
+index showed (0.10×). **The noise is real; the effect is not.** This says what the rule does with an effect of a given
+size under this machine's noise. It does not say the twin reproduces production, and it is not the twin catching a
+regression. Protocol: [tools/final/protocol.md](tools/final/protocol.md), committed before the analysis was run.
+
+<div align="center">
+<img src="docs/img/gates.svg" alt="Animated bar chart: as the injected slowdown grows, the aggregate gate's approvals fall slowly while the per-tenant gate's rejections rise" width="900">
+</div>
+
+Target `t_mixed` (its analytical class is a large share of total database time); neighbours pooled; 20 random orderings
+of the pairs. The draws are dependent, so the rates are indicative.
+
+| Slowdown of one neighbour | Per-tenant gate: **rejected for harm** (8 / 14 / 28 pairs) | Per-tenant gate: approved | Aggregate gate: **approved** (8 / 14 / 28 pairs) |
+|---|---|---|---|
+| none | 0% / 0% / 0% | 0% | 57% / 65% / 65% |
+| +5% (the margin) | 0% / 0% / 0% | 0% | 43% / 66% / 67% |
+| +10% | 3% / 4% / 3% | 0% | 39% / 55% / 63% |
+| +20% | 31% / 42% / 53% | 0% | **20% / 28% / 43%** |
+| +50% | 83% / 85% / 92% | 0% | 3% / 5% / 7% |
+| +100% | 88% / 94% / 100% | 0% | 1% / 0% / 0% |
+
+What it shows:
+
+- 🛡️ **The per-tenant gate let no injected harm through**, at any size or budget.
+- 🫥 **The aggregate gate approved a change that slowed a neighbour by 20% in 20–43% of sequences.** The target's gain
+  outweighs the victim in the total. This is the effect the project is about.
+- 🔍 Slowdowns of 10–20% the per-tenant gate mostly could not tell from noise. It held them as inconclusive, which blocks
+  the change without identifying the harm.
+- 🪙 **The advantage depends on the workload.** With target `t_analytic`, whose class is a small share of total time, the
+  aggregate gate approved almost nothing (at most 5%), harmful or not. It was not protecting anyone; it simply could not
+  see a benefit that small in the total.
+- ⏱️ **Three pairs are not enough**: the per-tenant gate rejected only 16% of +50% slowdowns and 36% of +100%.
+- 🧱 **The per-tenant gate approved nothing, including the harmless change.** On this machine its price is that nothing
+  passes without a person.
+
+Full tables, per neighbour and with the stalled pair left out: [docs/evidence/final/power.txt](docs/evidence/final/power.txt).
+
+### 5.6 Real changes through the real loop
+
+Two real changes, three ways of handling them, on the harness's own workload: the missing index for the analytical
+tenant (S1) and a change that does nothing, a statistics refresh (S9); each with no verification, with a canary only,
+and with the twin and the per-tenant gate at a budget of 8 replay pairs. Protocol and expectations were written first
+([tools/final/protocol.md](tools/final/protocol.md)).
+
+> ⏳ **Interim.** 11 of the 18 planned trials were recorded when this was written (all 11 valid). The table will be
+> updated when the run finishes; nothing below is selected.
+
+| Scenario | Handling | Trials | Outcome | Time to decision |
+|---|---|---|---|---|
+| Missing index | No verification | 2 | Applied | about 70 s |
+| Missing index | Canary only | 2 | Applied, canary held | about 75 s |
+| Missing index | Twin, per-tenant gate | 2 | **INCONCLUSIVE**, not applied (8 pairs each) | about 1,025 s |
+| No-op change | No verification | 2 | Applied | about 70 s |
+| No-op change | Canary only | 2 | Applied, canary held | about 80 s |
+| No-op change | Twin, per-tenant gate | 1 | **INCONCLUSIVE**, not applied (8 pairs) | about 1,015 s |
+
+**Does the twin agree with production about the target?** For the index, so far, yes:
+
+| `t_analytic/OLAP` p95 ratio | Value |
+|---|---|
+| Twin, treatment ÷ control (2 trials) | 0.126× [0.08, 0.20] and 0.114× [0.08, 0.16] |
+| Production, live ÷ mean(before, after) (4 trials) | 0.12× to 0.15× |
+
+That is a handful of trials of one kind of action; it is encouraging and it is not a validation of the twin.
+
+**And the neighbours?** In production, with the index applied, the OLTP classes sat at 0.94× to 1.03×. One class,
+`t_mixed/OLAP`, measured 1.06× to 1.16× in the two unverified trials and 0.93× to 1.03× in the two canary trials, with
+the *same* change applied both times; and the harness's 10% threshold flagged a tenant as "harmed" by a statistics
+refresh. That is this machine's noise, and it is why single-trial "harmed" flags are not reported as findings. The twin's
+neighbour intervals for the same change were as wide as 0.65 – 1.47.
+
+**Against what the protocol said to expect:** the index makes its target several times faster with no neighbour
+consistently slower (✔ so far); the twin ends INCONCLUSIVE with the target's benefit shown (✔); the no-op ends
+INCONCLUSIVE or rejected for no benefit, never approved and never rejected for harm (✔). No surprises, including the
+unwelcome one that the twin gate, at about 17 minutes a verdict, approved neither change.
+
+### 5.7 Things that went wrong, and what they taught
+
+These are the findings the project did not plan to have. They changed its design more than anything that went right.
+
+**The traps did not bite.** The scenario suite contained changes designed to help one tenant and hurt another. Measured
+at the class-level p95 the objectives are written in, none did:
+
+| Trap | Why it did nothing |
+|---|---|
+| More parallel workers | The row-security helper functions are marked parallel-unsafe, so **no tenant query ever runs in parallel**. An early "1.3× slowdown" was machine drift, measured before/after with no control |
+| An index built for every tenant | OLTP latency here is about 85% round trips outside the database; maintaining one more index is lost in it |
+| Anything touching one query | Class-level p95 is set by the slowest kind of operation in the class, so a query that becomes many times faster or slower can leave it unchanged |
+| Raising load to make contention visible | Ran into a lock convoy on each tenant's few warehouses, which collapses the run instead of degrading it |
+
+**Bugs found by using the system rather than testing it:**
+
+| Bug | Effect | State |
+|---|---|---|
+| The capture recorded the pooler's own `SET application_name` as tenant transactions | For a tenant with two connection classes, half of one class's replay samples were no-ops | Fixed |
+| The planner what-if judged a tenant's index across *every* tenant's partition | It could save only that partition's share, so the demo's own index was rejected | Fixed |
+| Whichever clone ran first looked about three times slower | Cold cache | Fixed: every relation is loaded into memory on both clones |
+| A clone rolled forward one transaction past its frozen moment | Arms did not start from the same state | Fixed: exclusive recovery target |
+| The canary measures latency inside the database | Harm that is only queueing at the pooler (a one-connection cap) is invisible to it | **Not fixed.** Stated |
+
+### 5.8 Scoreboard
+
+| ✅ Shown | ❌ Not shown |
+|---|---|
+| The whole loop runs: propose, verify in four tiers, decide, canary, apply, roll back | That the twin gate approves a safe change (on this laptop it cannot) |
+| The canary rolls back a harmful change automatically | That the twin catches a *real* harmful change (none was found) |
+| A gate that resamples within a replay reports false harm; one that judges pairs does not | That the twin's prediction matches production in general (a handful of pairs, one kind of action) |
+| Under injected harm, an aggregate gate approves what a per-tenant gate refuses | Anything about the LLM agent's proposals |
+| Typed actions, stored inverses, least-privilege roles and a trigger-enforced lifecycle hold under test | Rates with meaningful confidence intervals, for anything |
+
+## 6. Discussion and limitations
+
+**Safety is expensive, and the bill is paid in pairs.** Showing a big benefit is cheap: a ten-times speed-up is visible
+after a few replays. Showing that four other tenants are each within 5% of where they were is a different order of
+problem, because the claim is about the absence of a small effect in a noisy measurement. Most of the project's
+surprises are this one fact arriving from different directions.
+
+**The twin's arms run one after the other.** That is the design's weakest point on a noisy machine: anything that
+changes between the two replays (CPU frequency, a background task, a charger) lands entirely in the difference.
+Duet benchmarking [[6]](#ref6) runs both versions *at the same time* on the same machine so that such disturbances hit
+both, and reports accuracy gains of 2 to 80 times in the cloud. The A/A data shows tenants drifting together between
+sequential arms, which is the kind of noise concurrent arms cancel. This is the first thing a continuation should try.
+
+**An inconclusive verdict is a real outcome, not a failure message.** It blocks the change and asks a person. That is
+the correct behaviour for "I could not show this is safe", and it is also why a gate that only ever says "inconclusive"
+is not yet useful for autonomy.
+
+**Limitations, plainly:**
+
+- One laptop; all three planes share its CPU and disk; dataset at 0.3 scale and half rate. Variability on shared hardware
+  is well documented [[7]](#ref7) [[8]](#ref8), and this was worse than shared hardware.
+- The injected effect in §5.5 is a uniform slowdown. Real harm can have other shapes (only the tail, only during bursts).
+- No real cross-tenant harm exists in the action space on this stack, so the central claim is supported by a
+  semi-synthetic analysis only.
+- The LLM agent is tested against a scripted model, never a live one (no API key was available).
+- The canary cannot see queueing at the pooler.
+- The related-work search was focused, not systematic. No system was found that gates an automatically proposed change
+  on per-tenant non-inferiority in a shared instance; that is the absence of a result in a short search, not evidence
+  that none exists. **No novelty is claimed.**
+
+## 7. Conclusion
+
+DBPilot set out to answer whether an autonomous tuner can be made safe for a shared database by checking each change on
+a twin, tenant by tenant. The honest answer after building it is in three parts.
+
+**The machinery is real.** A proposer that cannot run SQL, an executor that can undo what it does, a clone frozen at a
+known moment and replayed with production's own workload, a gate, a canary, a ledger, and a console over all of it, exist
+and are tested. The loop closes in a browser, and the canary has pulled a harmful change back out of production without
+being asked.
+
+**The idea survives contact with evidence, in the one form we could test it.** When a neighbour is slowed by a known
+amount under real measurement noise, judging the workload as a whole approves the change a substantial part of the time,
+and judging each tenant does not. That is the reason to gate per tenant.
+
+**The measurement is the hard part, and it is not solved here.** The first gate was confidently wrong; finding that out
+took an experiment whose only purpose was to catch our own tool lying. The second gate is honest and, on a laptop, cannot
+say yes. Whether steadier hardware and concurrent arms close that gap is the open question, and the repository contains
+the protocol and runner to answer it.
+
+If there is one thing to take from the project, it is that *"we did not see any harm"* and *"we showed there was none"*
+are different sentences, and that most of the engineering lives in the distance between them.
+
+**What a continuation should do first**
+
+1. Run the two twin arms at the same time on separate cores, as duet benchmarking does, and repeat the A/A measurement.
+2. Repeat it on a machine whose cores are not shared and whose speed is steady (`tools/aa/run_linux.sh`).
+3. Only if neighbours can then be shown unharmed in a practical number of pairs, run the scenario suite.
+4. Find a real cross-tenant harm before claiming anything about catching one. The honest candidates: CPU contention once
+   the row-security helpers are parallel-safe, and write-heavy tenants at the full-size dataset.
+5. Give the canary a measure of client-side waiting, or keep concurrency caps away from it.
+6. Run the LLM agent against a live model and compare what it proposes with the rules.
+
+## 8. References
+
+This project has no single base paper; it sits between two lines of work. The closest in spirit are **[1]** (validate an
+automatic change, revert on regression, at scale) and **[2]** (safety constraints while tuning a live database), with
+**[6]** as the paper that explains what our measurements were missing.
+
+**Automatic tuning with validation**
+
+1. <a id="ref1"></a>S. Das et al. *Automatically Indexing Millions of Databases in Microsoft Azure SQL Database.* SIGMOD 2019. [doi:10.1145/3299869.3314035](https://doi.org/10.1145/3299869.3314035)
+2. <a id="ref2"></a>X. Zhang et al. *Towards Dynamic and Safe Configuration Tuning for Cloud Databases* (OnlineTune). SIGMOD 2022. [doi:10.1145/3514221.3526176](https://doi.org/10.1145/3514221.3526176)
+3. <a id="ref3"></a>J. Lao et al. *GPTuner: A Manual-Reading Database Tuning System via GPT-Guided Bayesian Optimization.* [arXiv:2311.03157](https://arxiv.org/abs/2311.03157)
+4. <a id="ref4"></a>V. Giannakouris, I. Trummer. *λ-Tune: Harnessing Large Language Models for Automated Database System Tuning.* [arXiv:2411.03500](https://arxiv.org/abs/2411.03500)
+5. <a id="ref5"></a>Z. Tan, S. Babu. *Tempo: Robust and Self-Tuning Resource Management in Multi-tenant Parallel Databases.* PVLDB 9(10), 2016. [doi:10.14778/2977797.2977799](https://doi.org/10.14778/2977797.2977799) · [PDF](https://www.vldb.org/pvldb/vol9/p720-tan.pdf)
+
+**Measuring on machines that will not hold still**
+
+6. <a id="ref6"></a>L. Bulej et al. *Duet Benchmarking: Improving Measurement Accuracy in the Cloud.* ICPE 2020. [doi:10.1145/3358960.3379132](https://doi.org/10.1145/3358960.3379132) · [arXiv:2001.05811](https://arxiv.org/abs/2001.05811)
+7. <a id="ref7"></a>A. Maricq et al. *Taming Performance Variability.* OSDI 2018. [usenix.org](https://www.usenix.org/conference/osdi18/presentation/maricq)
+8. <a id="ref8"></a>A. Uta et al. *Is Big Data Performance Reproducible in Modern Cloud Networks?* NSDI 2020. [usenix.org](https://www.usenix.org/conference/nsdi20/presentation/uta)
+
+**Industrial practice**
+
+9. <a id="ref9"></a>Oracle. *Database Administrator's Guide: Managing Indexes* (automatic indexing). [docs.oracle.com](https://docs.oracle.com/en/database/oracle/oracle-database/19/admin/managing-indexes.html)
+10. <a id="ref10"></a>Oracle. *Database Testing Guide* (Database Replay). [docs.oracle.com](https://docs.oracle.com/en/database/oracle/oracle-database/19/ratug/)
+
+**Workload and statistics**
+
+11. <a id="ref11"></a>R. Cole et al. *The Mixed Workload CH-benCHmark.* DBTest 2011. [doi:10.1145/1988842.1988850](https://doi.org/10.1145/1988842.1988850)
+12. <a id="ref12"></a>Transaction Processing Performance Council. *TPC-C Benchmark.* [tpc.org/tpcc](https://www.tpc.org/tpcc/)
+13. <a id="ref13"></a>D. Schuirmann. *A Comparison of the Two One-Sided Tests Procedure and the Power Approach for Assessing the Equivalence of Average Bioavailability.* J. Pharmacokinetics and Biopharmaceutics, 1987. [doi:10.1007/BF01068419](https://doi.org/10.1007/BF01068419) (why "no significant difference" is not "equivalent")
+14. <a id="ref14"></a>R. Kohavi, D. Tang, Y. Xu. *Trustworthy Online Controlled Experiments.* Cambridge University Press, 2020. [experimentguide.com](https://experimentguide.com/) (A/A tests)
+
+**Tools and study material**
+
+15. <a id="ref15"></a>HypoPG: hypothetical indexes for PostgreSQL. [github.com/HypoPG/hypopg](https://github.com/HypoPG/hypopg)
+16. <a id="ref16"></a>PostgreSQL documentation: [row security policies](https://www.postgresql.org/docs/current/ddl-rowsecurity.html) · [pg_stat_statements](https://www.postgresql.org/docs/current/pgstatstatements.html) · [table partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html) · [standby servers](https://www.postgresql.org/docs/current/warm-standby.html)
+17. <a id="ref17"></a>PgBouncer. [pgbouncer.org](https://www.pgbouncer.org/)
+18. <a id="ref18"></a>G. Tene. *wrk2* and the note on coordinated omission. [github.com/giltene/wrk2](https://github.com/giltene/wrk2)
+
+**In this repository:** [closing report](docs/REPORT.md) · [architecture specification](docs/ARCHITECTURE.md) ·
+[learning guide](docs/LEARNING_GUIDE.md) (every technology used, explained from scratch) ·
+[evidence and protocols](docs/evidence/README.md)
+
+---
+
+## 9. Appendix: run it yourself
+
+### A.1 Getting started
 
 Requirements: Docker with Compose, about 16 GB of memory, 20 CPU threads for the
 default core pinning (edit the `cpuset` values in `docker-compose.yml` for a
@@ -619,7 +1080,7 @@ docker compose run --rm dp-seed     # load four tenants (about 5 minutes)
 docker compose run --rm demo-seed   # register them as a demo organization
 ```
 
-### Resource profiles
+#### Resource profiles
 
 On one machine the three planes share memory and disk, so sizes are variables.
 The defaults in `docker-compose.yml` are the full-size profile; a 16 GB laptop
@@ -640,7 +1101,7 @@ At `SEED_SCALE` below 1.0 the data no longer has the TPC-C population per
 district; measurements taken with it must say so. Changing the seed variables
 after the first start has no effect until the data-plane volumes are recreated.
 
-### Walking through the demo
+#### Walking through the demo
 
 ```bash
 docker compose --profile demo up -d demo-load     # the four tenants send light traffic until stopped
@@ -676,7 +1137,7 @@ For heavier load, `docker compose run --rm workload --profile profiles/eval.json
 To use the LLM agent, set `ANTHROPIC_API_KEY` in `.env`. Without it the
 rule-based proposer still works.
 
-### Accounts on a demo deployment
+#### Accounts on a demo deployment
 
 | Variable | Default | Effect |
 |---|---|---|
@@ -702,7 +1163,7 @@ token in the browser; the token itself stays valid until it expires (8 hours).
 | Control-plane database | localhost:5440 |
 | Twin node agent | localhost:8090 |
 
-## 17. API overview
+### A.2 API overview
 
 All paths are under `/api/v1`.
 
@@ -722,7 +1183,7 @@ All paths are under `/api/v1`.
 | | `POST /proposals/{id}/reject`, `POST /proposals/{id}/rollback` | OPERATOR |
 | Evidence | `GET /clusters/{id}/ledger`, `/experiments`, `/twin`; `GET /audit` | VIEWER |
 
-## 18. Testing
+### A.3 Testing
 
 Tests run inside containers against real PostgreSQL instances.
 
@@ -755,7 +1216,7 @@ decision; and a harmful change (dropping an index a tenant depends on) undone by
 the canary without anyone asking. What automated tests do not cover: the LLM
 agent against the live model API.
 
-## 19. Repository layout
+### A.4 Repository layout
 
 ```
 core/dbpilot_core/   shared: typed actions and executor, safety gate, statement-log parser
@@ -780,10 +1241,14 @@ deploy/k3s/          three-node Kubernetes manifests
 docs/
   ARCHITECTURE.md    the design specification, with a table of where the build differs
   LEARNING_GUIDE.md  every technology explained
+  REPORT.md          the short closing report
+  evidence/          raw outputs and the protocols they were run under
+  img/               figures used in this report
+tools/               diagnostic and closing-evaluation protocols, runners and analysis scripts
 docker-compose.yml
 ```
 
-## 20. Implementation status
+### A.5 Implementation status
 
 | Component | State |
 |---|---|
@@ -802,9 +1267,9 @@ docker-compose.yml
 | Web console | Implemented; sign-in, session handling, every page and the change lifecycle covered by browser tests |
 | Scenario suite and evaluation harness | Implemented; single pilot trials only |
 | Kubernetes manifests | Written; not deployed |
-| Experimental evaluation | Not done. No results are claimed. Diagnostics so far are in [docs/evidence](docs/evidence/README.md) |
+| Experimental evaluation | A closing evaluation on the development laptop only ([§5](#5-results)); no controlled-machine evaluation. Raw outputs are in [docs/evidence](docs/evidence/README.md) |
 
-### What the diagnostics since have shown
+#### What the diagnostics since have shown
 
 Raw outputs and protocols are in [docs/evidence](docs/evidence/README.md). None of
 this is an evaluation result.
@@ -824,7 +1289,7 @@ this is an evaluation result.
 - **The development laptop is not a controlled environment**: its speed varies by
   5–24% under sustained load, following CPU frequency.
 
-### Pilot observations (not results)
+#### Pilot observations (not results)
 
 Five single trials were run to check that the harness and the loop work end to
 end. The first three predate two fixes to the twin (a clone that was one transaction past
@@ -864,33 +1329,6 @@ What these do and do not show:
 
 Known gaps against the design are listed in
 [ARCHITECTURE.md §14](docs/ARCHITECTURE.md#14-implementation-notes-where-the-build-differs-from-this-specification).
-
-## 21. Research context
-
-DBPilot builds on existing ideas and does not claim to have invented them:
-
-- **Validating a change and reverting on regression** is established practice:
-  Azure SQL Database implements index recommendations automatically and
-  reverts those that regress (SIGMOD 2019); Oracle creates an index invisible
-  and exposes it only once statements improve, and replays captured workload
-  on test systems.
-- **Safe tuning of a live database** has been studied on the instance as a whole
-  (OnlineTune, SIGMOD 2022).
-- **LLM-based database tuning** is an active field: GPTuner, λ-Tune, AgentTune,
-  and others, evaluated mainly on single workloads with aggregate metrics.
-- **SLO-aware multi-tenant tuning** was studied before LLMs (Tempo, VLDB 2016).
-- **Comparing two versions on a noisy machine** is done more accurately by
-  running them at the same time (duet benchmarking, ICPE 2020); DBPilot's twin
-  runs its arms one after the other, and its A/A measurements show the cost.
-
-What DBPilot set out to add is the combination, and its measurement: gating
-proposed changes on **per-tenant non-inferiority** in a shared instance, and
-quantifying what a twin adds over a canary alone. A focused search found no
-system that does this; that is not a systematic review, and no novelty is
-claimed. What was and was not shown is in the [closing report](docs/REPORT.md).
-
-Further reading: [closing report](docs/REPORT.md) · [architecture specification](docs/ARCHITECTURE.md) ·
-[learning guide](docs/LEARNING_GUIDE.md)
 
 ## License
 

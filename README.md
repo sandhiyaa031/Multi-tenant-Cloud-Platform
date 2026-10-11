@@ -1,12 +1,10 @@
 <div align="center">
 
-# 🧭 DBPilot
+#  DBPilot
 
 ### Safe, tenant-aware autonomous optimisation for shared PostgreSQL
 
-*An AI may suggest. A clone gets to find out. Production only hears about it afterwards.*
 
-**Project report** · PostgreSQL 18 · FastAPI · React · Docker Compose · 275 automated tests + browser end-to-end tests
 
 </div>
 

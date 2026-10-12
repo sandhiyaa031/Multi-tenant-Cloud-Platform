@@ -120,7 +120,11 @@ The demo workload has `t_analytic` look items up in `order_line`, which has no i
    The canary section lists each window's ratio per tenant.
 7. **See the effect.** Overview or Query Intelligence: `t_analytic`'s lookup is now several times faster.
 8. **Roll back.** On the proposal page choose **Roll back**. Expected: state **Rolled back**; the index is gone.
-9. **Evidence.** Experiments shows what the twin predicted against what production did. Audit History shows who decided
+9. **Optional, 7 minutes plus verification: the LLM agent.** With a `GROQ_API_KEY` (or `ANTHROPIC_API_KEY`) in `.env`,
+   Agent Console → **Run LLM agent**. Its proposal page shows every tool call it made under "Agent trace". On the
+   development laptop a recorded live proposal, with its inconclusive twin verdict, is already under Recommendations →
+   "Waiting for a decision" (proposed by "agent").
+10. **Evidence.** Experiments shows what the twin predicted against what production did. Audit History shows who decided
    what. Canary Deployments opens with the **Canary noise check**: how often the canary's rule would have fired on
    recent telemetry with no change at all.
 
@@ -149,7 +153,9 @@ back.
 | A proposal stays in "Proposed" | The engine is not running: `docker compose logs --tail 30 engine`, then `docker compose up -d --force-recreate engine collector` |
 | "Rule-based proposer" finds nothing | The index is already applied (roll the earlier proposal back), or there has been under a few minutes of traffic |
 | Agent Console: "the LLM agent is not configured" | Neither `ANTHROPIC_API_KEY` nor `GROQ_API_KEY` is in `.env`. Add one and run `docker compose up -d api` |
-| Agent Console: "the model API's quota is used up" | The provider refused the call. A free Groq account allows 200,000 tokens a day; try again when it has reset. The agent has not yet completed a live run in this project |
+| Agent Console: "the model API's quota is used up" | The provider refused the call. A free Groq account allows 200,000 tokens a day per model and one diagnosis uses about 60,000; try again when it has reset, or set `GROQ_MODEL` to another model |
+| "Run LLM agent" seems to hang | Expected on a free Groq account: the per-minute limit makes one diagnosis take 6 to 8 minutes. Leave the page open |
+| The agent's proposal says "the agent finished without proposing an action" | It used all 14 turns looking. Run it again; this happened in one of the three recorded live runs |
 | Signed out with "your session has ended" | Tokens last 8 hours. Sign in again |
 
 ## 7. Run the automated checks (optional)

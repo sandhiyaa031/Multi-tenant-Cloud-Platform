@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from app.proposers import agent
-from app.proposers.groq_client import (LATEST_RESULT_CHARS, OLDER_RESULT_CHARS, GroqClient, GroqError)
+from app.proposers.groq_client import CONTEXT_CHARS, RESULT_CHARS, STUB_CHARS, GroqClient, GroqError
 from tests.test_proposers import INDEX, FakeObserver, diagnose
 
 # `diagnosable` is a fixture of test_proposers; importing it makes it available here.
@@ -93,17 +93,65 @@ def test_a_spent_daily_quota_fails_at_once_with_what_the_api_said():
     assert server.slept == [] and len(server.requests) == 1
 
 
-def test_older_tool_results_are_sent_shortened_and_the_latest_in_fuller_form():
+def test_a_run_cut_short_by_the_api_keeps_what_the_agent_had_done():
+    spent = httpx.Response(429, headers={"retry-after": "900"}, json={"error": {"message": "tokens per day (TPD): Limit 200000"}})
+    server = Server(completion(calls=[("r0", "get_slo_status", "{}")]), completion(calls=[("r1", "get_tenants", "{}")]), spent)
+    with pytest.raises(GroqError) as failure:
+        agent.propose(FakeObserver(), client=server.client(model="some/model"))
+    partial = failure.value.partial_evidence
+    assert [t["name"] for t in partial["trace"]] == ["get_slo_status", "get_tenants"]
+    assert partial["stop_reason"] == "model_api_error" and partial["usage"]["requests"] == 2 and partial["model"] == "some/model"
+
+
+def test_the_api_logs_a_cut_short_run_and_still_stores_nothing(client, org, diagnosable, monkeypatch, caplog):  # noqa: F811
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "not-a-real-key")
+    spent = httpx.Response(429, headers={"retry-after": "900"}, json={"error": {"message": "tokens per day (TPD): Limit 200000"}})
+    server = Server(completion(calls=[("r0", "get_slo_status", "{}")]), spent)
+    monkeypatch.setattr("app.proposers.groq_client.GroqClient", lambda: server.client())
+    with caplog.at_level("WARNING", logger="dbpilot.api.proposals"):
+        r = diagnose(client, org, diagnosable)
+    assert r.status_code == 502 and "quota is used up" in r.json()["detail"]
+    assert client.get(f"/api/v1/proposals?cluster_id={diagnosable}", headers=org.admin).json() == []
+    assert any("agent run failed after 1 steps" in record.getMessage() and "get_slo_status" in record.getMessage()
+               for record in caplog.records)
+
+
+def test_recent_tool_results_stay_readable_and_only_the_oldest_are_shortened():
+    """All results share one budget, spent from the newest back. The first live run shortened every
+    earlier result, and the model kept asking for the same observations until its turns ran out."""
     long_rows = [{"tenant_role": "t_analytic", "query": "SELECT " + "x" * 200, "n": i} for i in range(60)]
-    obs = FakeObserver(top_queries=long_rows, slo_status=long_rows)
-    server = Server(completion(calls=[("c1", "get_top_queries", "{}")]), completion(calls=[("c2", "get_slo_status", "{}")]),
-                    completion(calls=[PROPOSE]))
-    result = agent.propose(obs, client=server.client())
-    tools_sent = [m["content"] for m in server.requests[2]["messages"] if m["role"] == "tool"]
-    assert len(tools_sent[0]) < OLDER_RESULT_CHARS + 100 < len(tools_sent[1]) < LATEST_RESULT_CHARS + 100
-    assert "shortened" in tools_sent[0]
+    asks = [completion(calls=[(f"r{i}", "get_top_queries", "{}")]) for i in range(5)]
+    server = Server(*asks, completion(calls=[PROPOSE]))
+    result = agent.propose(FakeObserver(top_queries=long_rows), client=server.client())
+    shown = [len(m["content"]) for m in server.requests[5]["messages"] if m["role"] == "tool"]     # oldest first
+    note = 100                                                                                      # the "shortened from" suffix
+    assert all(RESULT_CHARS <= n < RESULT_CHARS + note for n in shown[2:])          # the three newest: as much as any result gets
+    assert STUB_CHARS <= shown[0] < STUB_CHARS + note < shown[1] < RESULT_CHARS     # then what is left, then a stub
+    assert sum(shown) < CONTEXT_CHARS + STUB_CHARS + 5 * note
     # What the tool returned is still in the stored trace, in the trace's own length.
     assert len(result.evidence["trace"][0]["result"]) == 3000
+
+
+def test_a_short_result_is_shown_whole_however_old_it_is_while_the_budget_lasts():
+    objectives = [{"tenant_role": f"t_{i}", "query_class": "OLTP", "observed_ms": 20.0 + i, "threshold_ms": 100.0} for i in range(6)]
+    asks = [completion(calls=[(f"r{i}", "get_slo_status", "{}")]) for i in range(4)]
+    server = Server(*asks, completion(calls=[PROPOSE]))
+    agent.propose(FakeObserver(slo_status=objectives), client=server.client())
+    shown = [m["content"] for m in server.requests[4]["messages"] if m["role"] == "tool"]
+    assert len(shown) == 4 and all(json.loads(s) == objectives for s in shown)
+
+
+def test_the_last_turn_notice_reaches_the_model_after_the_tool_results():
+    asks = [completion(calls=[(f"r{i}", "get_slo_status", "{}")]) for i in range(agent.MAX_TURNS - 1)]
+    server = Server(*asks, completion(calls=[("p", "propose_action", json.dumps(
+        {"action": {"type": "no_action", "reason": "every objective is met"}, "rationale": "Nothing is wrong."}))]))
+    result = agent.propose(FakeObserver(), client=server.client())
+    assert result.action["type"] == "no_action" and not result.action.get("escalate")
+    final = server.requests[-1]["messages"]
+    assert [m["role"] for m in final[-2:]] == ["tool", "user"] and final[-1]["content"] == agent.LAST_TURN
+    assert all(m["content"] != agent.LAST_TURN for m in server.requests[-2]["messages"])
 
 
 def test_the_api_uses_groq_only_when_no_anthropic_key_is_set(client, org, diagnosable, monkeypatch):  # noqa: F811

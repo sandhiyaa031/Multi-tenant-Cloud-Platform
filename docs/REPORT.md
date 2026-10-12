@@ -26,7 +26,7 @@ and over a canary alone.
 
 | Part | State |
 |---|---|
-| Control plane: accounts, organizations, roles, audit, row-level isolation | Built; 191 automated tests with the gate and engine (172 at the time of the evaluation) |
+| Control plane: accounts, organizations, roles, audit, row-level isolation | Built; 196 automated tests with the gate and engine (172 at the time of the evaluation) |
 | Multi-tenant data plane: partition and role per tenant, row-level security, replica, pooler, least-privilege executor | Built; 36 tests |
 | Workload driver (TPC-C transactions and analytical queries, open loop) and evaluation harness | Built; 20 tests |
 | Telemetry collector | Built, tested |
@@ -34,7 +34,7 @@ and over a canary alone.
 | Digital twin: delayed standby, clones frozen at a known moment, replay, planner what-if | Built; 47 tests on a miniature data plane |
 | Safety gate, verification engine, canary controller | Built, tested |
 | Rule-based proposer | Built, tested, finds the demo's missing index on live telemetry |
-| LLM agent | Built and tested against a scripted model. **Never run against a live model**: no key was available during the project, and the one attempt afterwards was refused for quota (section 8) |
+| LLM agent | Built and tested against a scripted model. Not run live during the project (no key). Afterwards run three times on free-tier open-weight models: one run produced a proposal, which the twin left inconclusive (section 8) |
 | Web console | Built; sign-in, session handling, every page and the change lifecycle covered by browser tests |
 
 Three browser scenarios drive the running stack end to end:
@@ -198,7 +198,8 @@ Records: [evidence/final/trials.jsonl](evidence/final/trials.jsonl); computed re
 - **That the twin's prediction matches production in general.** It matched for the benefit of one index (Part B);
   nothing else was measured.
 - **How often the canary raises a false alarm.** It did once in three no-op trials; three trials do not give a rate.
-- **Anything about the LLM agent's proposals.** It has not been run against a live model.
+- **Anything general about the LLM agent's proposals.** One live proposal from one small open-weight model exists
+  (section 8). It shows the path works; it says nothing about how good proposals are.
 - **Rates with meaningful confidence intervals**, for anything.
 
 ## 6. Related work
@@ -234,7 +235,8 @@ instance. That is the absence of a result in a short search, not evidence that n
    CPU once the row-security helpers are parallel-safe, and write-heavy tenants at the full-size dataset.
 5. Give the canary a measure of client-side waiting, and longer windows or a minimum sample count that makes a p95
    meaningful for low-traffic classes.
-6. Run the LLM agent against a live model and compare what it proposes with the rules.
+6. Run the LLM agent many times on a capable model, without a free tier's limits, and compare what it proposes with
+   the rules. One completed run exists (section 8).
 
 ## 8. Added after the closing evaluation
 
@@ -256,14 +258,44 @@ gate, the engine or the canary decides, so the system that was measured above is
   against a model served by Groq when no Anthropic key is set (`GROQ_API_KEY`, `GROQ_MODEL`, default
   `openai/gpt-oss-120b`). It is an adapter around the same loop, tools and validation. Because a free Groq account
   allows 8,000 tokens a minute, the adapter waits out the per-minute limit and shows the model shortened versions of
-  older tool results; both are recorded with the proposal. **The agent has still not completed a live run**: the first
-  attempt, on 2026-10-11, was refused by the provider because the account's daily quota (200,000 tokens) was already
-  spent. The adapter is covered by 8 tests against a scripted HTTP server.
+  older tool results; both are recorded with the proposal. The adapter is covered by 12 tests against a scripted HTTP
+  server. What happened when it was used is below.
 
-Tests after these additions: control plane, gate and engine 191 (was 172; 11 new in `tests/test_planning.py`, 8 in
-`tests/test_groq_client.py`); the
+Tests after these additions: control plane, gate and engine 196 (was 172; 11 new in `tests/test_planning.py`, 12 in
+`tests/test_groq_client.py`, 1 in `tests/test_proposers.py`); the
 browser tests check the new card, the new column and the download.
 
 Suggested and deliberately not built, because each changes a decision or a measurement and would need its own
 validation first: running the twin's two arms at the same time; a canary guard on waiting at the pooler; canary windows
 sized by sample count instead of by time.
+
+### The agent, live (2026-10-12)
+
+The agent ran against a real model for the first time: three calls to the diagnose endpoint on the demo cluster, on
+open-weight models through Groq's free tier, with no protocol written beforehand. Records and a fuller account:
+[evidence/agent](evidence/agent/README.md).
+
+| Run | Model | What happened |
+|---|---|---|
+| 1 | `openai/gpt-oss-120b` | 14 model calls in 361 s (339 s of it waiting for the rate limit). It looked at the right things and found the same candidate as the rules, an index on `order_line(ol_i_id)` for `t_analytic`, then ran out of turns without deciding. **No proposal** |
+| 2 | same | Refused by the provider on the twelfth call: daily quota used up. Nothing stored |
+| 3 | `openai/gpt-oss-20b` | 12 model calls in 429 s. **Proposed** an index on `order_line (ol_w_id, ol_d_id, ol_o_id, ol_delivery_d)` for `t_mixed` |
+
+Run 1 failed partly through the adapter: it showed the model only 300 characters of each earlier tool result, so the
+model kept asking for the same observations, and it was never told its turn budget. Both were changed before run 2
+(recent results now stay whole within a shared budget; the task states the budget and the last turn is announced).
+Runs 1 and 3 therefore differ in the model and in those changes, and are not a comparison of the two models.
+
+What DBPilot did with the proposal of run 3: static rules passed it, the planner what-if passed it (cost improves for
+1 of 15 observed queries), and the twin, after 8 replay pairs, returned **INCONCLUSIVE**. The proposal's own target,
+`t_mixed/OLAP`, measured 0.91x with an interval of 0.76 to 1.08, so not even its benefit was shown. It was not applied.
+
+Two things are worth keeping from this. The model's rationale read well and its numbers came from the tools, but it
+named one query's problem (a sort spilling to disk) and proposed an index that the what-if showed to help a different
+query; the rule-based proposer, on the same telemetry, answered the spill with sort memory and proposed eight changes,
+none of them this index. And the pipeline treated the confident proposal like any other: it measured it and did not let
+it through.
+
+This is one completed proposal from one small model whose tool results had to be shortened. It shows the path works
+live. It shows nothing about how good a language model's proposals are, and the Anthropic path has still never been run
+against the live service.

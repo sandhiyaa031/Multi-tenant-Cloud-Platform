@@ -23,6 +23,10 @@ from dbpilot_core import actions
 MODEL = os.environ.get("AGENT_MODEL", "claude-opus-5-5")
 MAX_TURNS = 14
 MAX_RESULT_CHARS = 12000
+# Said with the last tool results the model will get. Without it a model that is still looking
+# around when the turns run out ends with nothing: the first live run did exactly that.
+LAST_TURN = ("This is your last turn. Call propose_action now with your decision, based on what you have seen. "
+             "If the evidence does not support a specific change, propose no_action and say why.")
 
 SYSTEM = """You are the diagnosis agent of DBPilot, a control plane for one PostgreSQL instance shared by several tenants.
 
@@ -156,7 +160,8 @@ def propose(obs: Observer, client: anthropic.Anthropic | None = None, hint: str 
     client = client or anthropic.Anthropic()
     system = [{"type": "text", "text": SYSTEM + json.dumps(actions.action_json_schema()),
                "cache_control": {"type": "ephemeral"}}]
-    task = "Diagnose this cluster and propose at most one action."
+    task = (f"Diagnose this cluster and propose at most one action. You have {MAX_TURNS} turns in all, the one that "
+            "calls propose_action included, so look at what matters and then decide.")
     messages = [{"role": "user", "content": f"{task}\n\nOperator note: {hint}" if hint else task}]
     trace: list[dict] = []
     usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "requests": 0}
@@ -164,16 +169,24 @@ def propose(obs: Observer, client: anthropic.Anthropic | None = None, hint: str 
     def evidence(**extra) -> dict:
         # A client for another provider names its own model and says what it did to fit that provider's limits.
         served = {"provider": client.provider, "waited_for_rate_limit_s": round(client.waited_s, 1),
-                  "note": "older tool results were shortened before being shown to the model"} if hasattr(client, "provider") else {}
+                  "note": "tool results were kept within a size budget; the oldest were shortened before "
+                          "being shown to the model"} if hasattr(client, "provider") else {}
         return {"proposer": "agent", "model": getattr(client, "model", MODEL), "trace": trace, "usage": usage, **served, **extra}
 
-    for _ in range(MAX_TURNS):
+    for turn in range(MAX_TURNS):
         # Refusal fallback is opt-in on this model; "default" lets the API pick the fallback by refusal category.
-        response = client.beta.messages.create(
-            model=MODEL, max_tokens=16000, system=system, tools=TOOLS, messages=messages,
-            output_config={"effort": "high"},
-            betas=["server-side-fallback-2026-07-01"], fallbacks="default",
-        )
+        try:
+            response = client.beta.messages.create(
+                model=MODEL, max_tokens=16000, system=system, tools=TOOLS, messages=messages,
+                output_config={"effort": "high"},
+                betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+            )
+        except Exception as exc:
+            # The model API failed part-way. Nothing is proposed, but what the agent had looked at
+            # goes with the error so the caller can keep it: a run that dies on its twelfth call
+            # should not also lose the eleven before it.
+            exc.partial_evidence = evidence(stop_reason="model_api_error")
+            raise
         usage["requests"] += 1
         usage["input_tokens"] += response.usage.input_tokens
         usage["output_tokens"] += response.usage.output_tokens
@@ -215,6 +228,8 @@ def propose(obs: Observer, client: anthropic.Anthropic | None = None, hint: str 
             except Exception as exc:
                 trace.append({"kind": "tool", "name": use.name, "input": use.input, "error": str(exc)[:500]})
                 results.append({"type": "tool_result", "tool_use_id": use.id, "is_error": True, "content": str(exc)[:500]})
+        if turn == MAX_TURNS - 2:
+            results.append({"type": "text", "text": LAST_TURN})
         # All results of one assistant turn go back in a single user message.
         messages.append({"role": "user", "content": results})
 

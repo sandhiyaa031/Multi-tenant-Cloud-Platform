@@ -196,6 +196,20 @@ def test_agent_cannot_loop_forever():
     assert result.action["escalate"] and len(model.requests) == agent.MAX_TURNS
 
 
+def test_agent_is_told_its_turn_budget_and_when_one_turn_is_left():
+    """A model still looking around when the turns run out ends with nothing, as the first live run did."""
+    decide = reply(tool("propose_action", "p", rationale="Nothing is wrong.", action={"type": "no_action", "reason": "objectives met"}))
+    model = FakeModel(*[reply(tool("get_slo_status", str(i))) for i in range(agent.MAX_TURNS - 1)], decide)
+    result = agent.propose(FakeObserver(), client=model)
+    assert result.action["type"] == "no_action" and not result.action.get("escalate")
+    assert f"{agent.MAX_TURNS} turns" in model.requests[0]["messages"][0]["content"]
+    notice = {"type": "text", "text": agent.LAST_TURN}
+    # Said once, with the results that precede the final request, and after them.
+    assert model.requests[-1]["messages"][-1]["content"][-1] == notice
+    assert model.requests[-1]["messages"][-1]["content"][0]["type"] == "tool_result"
+    assert all(notice not in m["content"] for m in model.requests[-2]["messages"] if isinstance(m["content"], list))
+
+
 def test_agent_has_no_tool_that_writes():
     names = {t["name"] for t in agent.TOOLS}
     assert names == {"get_tenants", "get_slo_status", "get_latency", "get_top_queries", "get_tenant_load",

@@ -163,7 +163,7 @@ single twin instance, so it is never auto-approved.
 **Explain it.** "It is the one place where DBPilot can limit or redirect a tenant
 without touching the application."
 
-## 7. Agentic AI and tool calling — Built (not yet run against a live model)
+## 7. Agentic AI and tool calling — Built; first run live after the project closed
 
 **What.** An LLM that is given functions it may call, decides which to call,
 reads the results and continues until it has an answer.
@@ -197,10 +197,17 @@ it before verification, and the database refuses the transition even to its
 owner. Without an API key, or when the model API fails, the endpoint answers
 with a clear error (503, 502) and stores nothing.
 
-It has not been run against the live API in this project, because no API key
-was available. So nothing is known yet about what a real model proposes, how
-many tool calls it uses, what it costs, or whether the request parameters the
-adapter sends are accepted by the live service.
+It was not run against a live API during the project, because no API key was
+available. Afterwards it ran three times on small open-weight models through
+Groq's free tier (`docs/evidence/agent/`). One run used all fourteen turns
+looking and decided nothing; one was cut off by the provider's daily quota; one
+proposed an index in twelve model calls, using about 65,000 tokens and seven
+minutes, most of them spent waiting for the per-minute limit. The twin left
+that proposal inconclusive. Three lessons came out of it: tell the model how
+many turns it has; do not hide earlier tool results from it to save tokens,
+because it will ask again; and read a fluent rationale with suspicion, since
+the one produced joined two different queries. Whether the request parameters
+sent on the Anthropic path are accepted by that live service is still unknown.
 
 **Explain it.** "The model chooses among bounded actions; it never writes SQL
 that executes, and it cannot approve its own proposal. If it hallucinates, the

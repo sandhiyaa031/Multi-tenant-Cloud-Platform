@@ -69,7 +69,7 @@ Bonferroni correction: the 5% error allowance is divided among the tenant compar
 ## The evidence
 
 **14. How was it tested?**
-294 automated tests against real PostgreSQL instances (191 control plane, gate and engine; 36 data plane; 20 workload;
+299 automated tests against real PostgreSQL instances (196 control plane, gate and engine; 36 data plane; 20 workload;
 47 twin), and three browser tests that drive the running stack end to end.
 
 **15. Do passing tests show the idea works?**
@@ -137,16 +137,27 @@ flagged 28% of stretches, mostly the class with about 7 transactions per window.
 and other load on the laptop, so it is an indication that the rule is fragile here, not a measured rate.
 
 **26. Does the LLM agent work?**
-The agent loop, its tools and its path through the API are tested against a scripted stand-in model. It has never
-completed a run against a live model. No key was available during the project; afterwards a Groq path was added and
-the one attempt was refused because the free account's daily quota was already spent. Nothing is claimed about the
-quality of its proposals.
+The agent loop, its tools and its path through the API are tested against a scripted stand-in model. It was not run
+live during the project (no key). Afterwards it ran three times on small open-weight models through Groq's free tier.
+Run 1 looked at the right things, found the same candidate index as the rules, and ran out of turns without deciding.
+Run 2 was cut off by the provider's daily quota. Run 3 proposed a different index, for `t_mixed`; static rules and
+the planner what-if passed it, and the twin returned inconclusive, with not even the target's benefit shown
+(0.91x, interval 0.76 to 1.08). It was not applied. So the path works live; nothing is claimed about the quality of an
+LLM's proposals from one example.
+
+**26b. What did the live runs teach you?**
+Three things. The agent needs to know its turn budget, or it keeps looking until the turns are gone. An adapter that
+hides earlier tool results to save tokens makes the model ask again and wastes more than it saves. And the model's
+explanation in run 3 read convincingly while joining two different queries: it blamed a sort that spills to disk and
+proposed an index that helps another query. The rule-based proposer answered the same spill with sort memory.
+Verification, not the explanation, decided.
 
 ## Limitations
 
 **27. What are the main limitations?**
 One laptop whose speed varies 5 to 24% under load; all three planes on that one machine; a 0.3-scale dataset at half
-rate; no real cross-tenant harm found; the LLM never run live; few trials, so no rates with useful confidence intervals;
+rate; no real cross-tenant harm found; the LLM agent run live only three times, on free-tier open models; few trials,
+so no rates with useful confidence intervals;
 the canary cannot see waiting at the connection pooler and raised one false alarm in three no-op trials.
 
 **28. Why did you not use a cloud machine?**
@@ -155,7 +166,8 @@ No paid machine was available. A protocol and runner for that measurement exist 
 **29. What would you do next?**
 First, run the two twin arms at the same time on separate cores, as duet benchmarking does, since the noise seen is
 mostly drift between sequential arms. Second, repeat the A/A test on a steady machine. Only then run the scenario suite.
-Also: find a real cross-tenant harm, give the canary a client-side measure, and run the LLM agent live.
+Also: find a real cross-tenant harm, give the canary a client-side measure, and evaluate the LLM agent properly: many
+runs on a capable model, compared with the rules.
 
 **30. What are known weaknesses you did not fix?**
 Two in the canary. It measures latency inside the database, so a concurrency cap that makes requests queue at the pooler

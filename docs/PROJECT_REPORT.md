@@ -63,8 +63,9 @@ The measurements are more sobering, and more interesting, than the build:
 - In 18 real trials the twin saw a useful index's benefit and agreed with production about its size, but ended
   inconclusive every time; and the canary once rolled back a change that did nothing.
 
-No real change was found that harms a neighbour on this stack, so the twin has not been shown to catch one, and the LLM
-agent has not been run against a live model. Both are stated as open, with the reasons.
+No real change was found that harms a neighbour on this stack, so the twin has not been shown to catch one. The LLM
+agent was not run against a live model during the project; three runs on free-tier open models afterwards produced one
+proposal, which the twin left inconclusive (section 7.1). Both are stated as open, with the reasons.
 
 ## 2. Introduction
 
@@ -522,8 +523,9 @@ exactly what was there. The same executor runs against the twin and against
 production, so what was verified is what gets applied.
 
 Every tool call the agent makes is stored with its proposal and shown in the
-Agent Console. The agent loop is tested against a scripted model; it has not
-yet been run against the live model API in this project.
+Agent Console. The agent loop is tested against a scripted model. Its first live
+runs came after the evaluation, on open-weight models through Groq's free tier
+(section 7.1); the Anthropic path has not been run against the live service.
 
 ### 4.9 Digital twin
 
@@ -715,7 +717,7 @@ The short version, before the long one:
 | Does the twin agree with production about a change's benefit? | **For the one case measured**, yes (0.11–0.16× against 0.12–0.15×) | 9 real trials of one index |
 | Is the canary free of false alarms? | **No.** It rolled back a do-nothing change once in three | Real trials |
 | Did the twin catch a real harmful change? | **Not shown.** None was found to catch | — |
-| Is the LLM agent any good? | **Not shown.** Never run against a live model | — |
+| Is the LLM agent any good? | **Not shown.** Three live runs afterwards on small open models gave one proposal, which the twin left inconclusive ([§7.1](#71-added-after-the-closing-evaluation)) | Anecdote |
 
 ### 5.1 What is built and tested
 
@@ -964,7 +966,8 @@ is not yet useful for autonomy.
 - The injected effect in §5.5 is a uniform slowdown. Real harm can have other shapes (only the tail, only during bursts).
 - No real cross-tenant harm exists in the action space on this stack, so the central claim is supported by a
   semi-synthetic analysis only.
-- The LLM agent is tested against a scripted model, never a live one (no API key was available).
+- The LLM agent was tested only against a scripted model during the project (no API key was available). Three live
+  runs afterwards, on free-tier open models, are an anecdote, not an evaluation.
 - The canary cannot see queueing at the pooler, and on a low-traffic class its 20-second windows hold too few
   queries for a steady p95: it rolled back a do-nothing change in one of three trials.
 - The related-work search was focused, not systematic. No system was found that gates an automatically proposed change
@@ -1002,7 +1005,8 @@ are different sentences, and that most of the engineering lives in the distance 
    the row-security helpers are parallel-safe, and write-heavy tenants at the full-size dataset.
 5. Give the canary a measure of client-side waiting, and longer windows or a minimum sample count that makes a p95
    meaningful for low-traffic classes.
-6. Run the LLM agent against a live model and compare what it proposes with the rules.
+6. Run the LLM agent many times on a capable model, without a free tier's limits, and compare what it proposes with
+   the rules.
 
 ### 7.1 Added after the closing evaluation
 
@@ -1024,12 +1028,11 @@ gate, the engine or the canary decides, so the system that was measured in secti
   against a model served by Groq when no Anthropic key is set (`GROQ_API_KEY`, `GROQ_MODEL`, default
   `openai/gpt-oss-120b`). It is an adapter around the same loop, tools and validation. Because a free Groq account
   allows 8,000 tokens a minute, the adapter waits out the per-minute limit and shows the model shortened versions of
-  older tool results; both are recorded with the proposal. **The agent has still not completed a live run**: the first
-  attempt, on 2026-10-11, was refused by the provider because the account's daily quota (200,000 tokens) was already
-  spent. The adapter is covered by 8 tests against a scripted HTTP server.
+  older tool results; both are recorded with the proposal. The adapter is covered by 12 tests against a scripted HTTP
+  server. What happened when it was used is below.
 
-Tests after these additions: control plane, gate and engine 191 (was 172; 11 new in `tests/test_planning.py`, 8 in
-`tests/test_groq_client.py`); the
+Tests after these additions: control plane, gate and engine 196 (was 172; 11 new in `tests/test_planning.py`, 12 in
+`tests/test_groq_client.py`, 1 in `tests/test_proposers.py`); the
 browser tests check the new card, the new column and the download.
 
 Suggested and deliberately not built, because each changes a decision or a measurement and would need its own
@@ -1037,7 +1040,38 @@ validation first: running the twin's two arms at the same time; a canary guard o
 sized by sample count instead of by time.
 
 Test counts elsewhere in this report (275 in total, 172 for the control plane) are those at the time of the
-evaluation; the control-plane suite now has 191.
+evaluation; the control-plane suite now has 196.
+
+#### The agent, live (2026-10-12)
+
+The agent ran against a real model for the first time: three calls to the diagnose endpoint on the demo cluster, on
+open-weight models through Groq's free tier, with no protocol written beforehand. Records and a fuller account:
+[evidence/agent](evidence/agent/README.md).
+
+| Run | Model | What happened |
+|---|---|---|
+| 1 | `openai/gpt-oss-120b` | 14 model calls in 361 s (339 s of it waiting for the rate limit). It looked at the right things and found the same candidate as the rules, an index on `order_line(ol_i_id)` for `t_analytic`, then ran out of turns without deciding. **No proposal** |
+| 2 | same | Refused by the provider on the twelfth call: daily quota used up. Nothing stored |
+| 3 | `openai/gpt-oss-20b` | 12 model calls in 429 s. **Proposed** an index on `order_line (ol_w_id, ol_d_id, ol_o_id, ol_delivery_d)` for `t_mixed` |
+
+Run 1 failed partly through the adapter: it showed the model only 300 characters of each earlier tool result, so the
+model kept asking for the same observations, and it was never told its turn budget. Both were changed before run 2
+(recent results now stay whole within a shared budget; the task states the budget and the last turn is announced).
+Runs 1 and 3 therefore differ in the model and in those changes, and are not a comparison of the two models.
+
+What DBPilot did with the proposal of run 3: static rules passed it, the planner what-if passed it (cost improves for
+1 of 15 observed queries), and the twin, after 8 replay pairs, returned **INCONCLUSIVE**. The proposal's own target,
+`t_mixed/OLAP`, measured 0.91x with an interval of 0.76 to 1.08, so not even its benefit was shown. It was not applied.
+
+Two things are worth keeping from this. The model's rationale read well and its numbers came from the tools, but it
+named one query's problem (a sort spilling to disk) and proposed an index that the what-if showed to help a different
+query; the rule-based proposer, on the same telemetry, answered the spill with sort memory and proposed eight changes,
+none of them this index. And the pipeline treated the confident proposal like any other: it measured it and did not let
+it through.
+
+This is one completed proposal from one small model whose tool results had to be shortened. It shows the path works
+live. It shows nothing about how good a language model's proposals are, and the Anthropic path has still never been run
+against the live service.
 
 ## 8. References
 
@@ -1274,7 +1308,7 @@ suites replace with stand-ins: a change applied to production under a canary,
 kept, and rolled back on request; the same after the digital twin and a person's
 decision; and a harmful change (dropping an index a tenant depends on) undone by
 the canary without anyone asking. What automated tests do not cover: the LLM
-agent against the live model API.
+agent against a live model API (three manual runs are described in section 7.1).
 
 ### A.4 Repository layout
 
@@ -1323,7 +1357,7 @@ docker-compose.yml
 | Verification engine and proposal state machine | Implemented; state machine, decision logic and the twin verification path tested. The whole loop (proposal, twin, decision, canary, apply, rollback) runs end to end in a browser test, with an inconclusive twin verdict and an admin's override; a twin approval has not yet occurred on real measurements |
 | Canary controller and rollback | Implemented; decision logic tested; holding, rollback on request and automatic rollback run live in browser tests. It measures latency inside the database, so harm that is only queueing at the pooler (a concurrency cap) is invisible to it |
 | Rule-based proposer | Implemented, tested |
-| LLM agent | Implemented; the loop and its path through the API tested against a scripted model. Not run against the live API (no key available) |
+| LLM agent | Implemented; the loop and its path through the API tested against a scripted model. Run live three times after the evaluation on free-tier open models through Groq (one proposal, left inconclusive by the twin); the Anthropic path never run live |
 | Web console | Implemented; sign-in, session handling, every page and the change lifecycle covered by browser tests |
 | Scenario suite and evaluation harness | Implemented; single pilot trials only |
 | Kubernetes manifests | Written; not deployed |

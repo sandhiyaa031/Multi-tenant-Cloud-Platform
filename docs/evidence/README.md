@@ -15,6 +15,7 @@ works in general.
 | `p01h/` | 35-minute synthetic CPU soak with speed canaries, database idle | Speed varied by 5-24% and followed CPU frequency; AC stayed on. The machine is not a controlled environment for quantitative runs |
 | `e1/` | 30 no-action (A/A) twin runs judged by the unmodified gate | 28 valid. See below |
 | `final/` | Closing evaluation (`tools/final/protocol.md`): injected effects on the E1 pairs (`power.*`), and 18 real trials through the loop (`trials.*`) | Injected: the aggregate gate approved a 20% slowdown of a neighbour in 20-43% of sequences, the per-tenant gate in none, and it approved nothing harmless either. Real: all 18 valid; every twin verdict INCONCLUSIVE; twin and production agreed on the index's benefit; the canary rolled back a no-op once. See [the closing report](../REPORT.md) |
+| `agent/` | Three live runs of the LLM agent on free-tier open-weight models, made after the closing evaluation with no protocol (see `agent/README.md`) | One run decided nothing, one was cut off by the provider's quota, one proposed an index that the twin left inconclusive. An anecdote, not an evaluation |
 
 ## E1 in brief (`e1/analysis.txt` is the full output of the frozen analysis)
 

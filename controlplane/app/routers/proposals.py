@@ -1,4 +1,6 @@
 """Proposals: creating them, following them through verification, deciding on them."""
+import json
+import logging
 import os
 from datetime import datetime
 from typing import Any, Literal
@@ -16,6 +18,7 @@ from app.planning import twin_planning
 from dbpilot_core import actions
 
 router = APIRouter(tags=["proposals"])
+log = logging.getLogger("dbpilot.api.proposals")
 
 
 class ProposalIn(BaseModel):
@@ -118,6 +121,14 @@ class DiagnoseIn(BaseModel):
     auto_approve: bool = False
 
 
+def _log_partial_run(exc: Exception) -> None:
+    """A run the model API cut short proposes nothing, but what the agent had done is kept in the log."""
+    partial = getattr(exc, "partial_evidence", None)
+    if partial and partial["trace"]:
+        log.warning("agent run failed after %d steps; partial evidence: %s", len(partial["trace"]),
+                    json.dumps(partial, default=str))
+
+
 def _diagnose(user_id: UUID, org_id: UUID, cluster_id: UUID, body: DiagnoseIn) -> list:
     """Runs a proposer over the cluster's observations. Synchronous: called off the event loop."""
     try:
@@ -145,8 +156,10 @@ def _diagnose(user_id: UUID, org_id: UUID, cluster_id: UUID, body: DiagnoseIn) -
         try:
             return [agent.propose(observer, client=model, hint=body.hint)]
         except GroqError as exc:
+            _log_partial_run(exc)
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"the model API call failed: {str(exc)[:300]}")
         except anthropic.APIError as exc:
+            _log_partial_run(exc)
             # The model could not be reached or refused the request at the transport level.
             # Nothing was proposed, so nothing is stored.
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"the model API call failed: {type(exc).__name__}: {str(exc)[:300]}")

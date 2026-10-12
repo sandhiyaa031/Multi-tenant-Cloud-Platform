@@ -7,9 +7,14 @@ model. Nothing here can propose or apply anything by itself.
 
 A free Groq account allows a few thousand tokens per minute, and every request
 resends the whole conversation. So the adapter does two things the loop does not
-know about: it waits when the API says the minute's budget is spent, and it sends
-older tool results in shortened form. The trace stored with the proposal keeps what
-each tool returned; what the model was shown is shorter, and `evidence` says so.
+know about: it waits when the API says the minute's budget is spent, and it keeps
+all tool results together within a size budget, shortening the oldest first. The
+trace stored with the proposal keeps what each tool returned; what the model was
+shown can be shorter, and `evidence` says so.
+
+The first live run (2026-10-12) cut every earlier result to 300 characters. The
+model then asked for the same observations again and again and used up its turns
+before deciding. Hence the shared budget: recent results stay readable.
 """
 import json
 import os
@@ -21,8 +26,9 @@ import httpx
 URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_MODEL = "openai/gpt-oss-120b"
 MAX_OUTPUT_TOKENS = 1500
-LATEST_RESULT_CHARS = 2500     # tool results of the most recent turn, as shown to the model
-OLDER_RESULT_CHARS = 300       # tool results of earlier turns
+RESULT_CHARS = 2500            # the most of any one tool result the model is shown
+CONTEXT_CHARS = 9000           # all tool results in one request together; the newest are kept whole first
+STUB_CHARS = 200               # what is left of a result once the budget is spent: enough to see it was asked
 MAX_WAITS = 8                  # times one request may wait for the rate limit before giving up
 MAX_WAIT_S = 65.0
 
@@ -35,11 +41,22 @@ def _shorten(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + f"... [shortened from {len(text)} characters to fit the rate limit]"
 
 
+def _allowances(messages: list[dict]) -> dict[str, int]:
+    """Characters of each tool result to show, by tool_use_id: the budget is spent from the newest result back."""
+    results = [r for m in messages if m["role"] == "user" and isinstance(m["content"], list)
+               for r in m["content"] if r.get("type") == "tool_result"]
+    remaining, allowed = CONTEXT_CHARS, {}
+    for result in reversed(results):
+        allowed[result["tool_use_id"]] = max(STUB_CHARS, min(RESULT_CHARS, remaining))
+        remaining -= min(len(str(result["content"])), allowed[result["tool_use_id"]])
+    return allowed
+
+
 def to_openai_messages(system: str, messages: list[dict]) -> list[dict]:
     """The loop's conversation (Anthropic message shapes) as OpenAI chat messages."""
-    last_results = max((i for i, m in enumerate(messages) if m["role"] == "user" and isinstance(m["content"], list)), default=-1)
+    allowed = _allowances(messages)
     out = [{"role": "system", "content": system}]
-    for i, message in enumerate(messages):
+    for message in messages:
         content = message["content"]
         if isinstance(content, str):
             out.append({"role": message["role"], "content": content})
@@ -49,9 +66,14 @@ def to_openai_messages(system: str, messages: list[dict]) -> list[dict]:
                      for b in content if b.type == "tool_use"]
             out.append({"role": "assistant", "content": text or None, **({"tool_calls": calls} if calls else {})})
         else:
-            limit = LATEST_RESULT_CHARS if i == last_results else OLDER_RESULT_CHARS
             for result in content:
-                out.append({"role": "tool", "tool_call_id": result["tool_use_id"], "content": _shorten(str(result["content"]), limit)})
+                if result.get("type") == "tool_result":
+                    out.append({"role": "tool", "tool_call_id": result["tool_use_id"],
+                                "content": _shorten(str(result["content"]), allowed[result["tool_use_id"]])})
+            # Anything the loop says beside the results (the last-turn notice) follows them as a user message.
+            said = "\n".join(part["text"] for part in content if part.get("type") == "text")
+            if said:
+                out.append({"role": "user", "content": said})
     return out
 
 

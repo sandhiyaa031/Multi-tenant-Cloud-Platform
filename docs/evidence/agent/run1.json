@@ -1,0 +1,163 @@
+{
+ "status": 201,
+ "seconds": 360.6,
+ "hint": "",
+ "body": [
+  {
+   "id": "f3c379fd-5eaa-4adc-8cd7-f0d98099c78a",
+   "cluster_id": "51227493-32d6-4e66-9f82-db3c1d3a756e",
+   "target_tenant_id": null,
+   "source": "agent",
+   "action": {
+    "type": "no_action",
+    "reason": "the agent finished without proposing an action",
+    "escalate": true
+   },
+   "rationale": "The agent did not call propose_action.",
+   "evidence": {
+    "note": "older tool results were shortened before being shown to the model",
+    "model": "openai/gpt-oss-120b",
+    "trace": [
+     {
+      "kind": "tool",
+      "name": "get_tenants",
+      "input": {},
+      "result": "[{\"name\": \"steady\", \"db_role\": \"t_steady\", \"profile\": \"STEADY_OLTP\", \"warehouse_lo\": 1, \"warehouse_hi\": 2}, {\"name\": \"bursty\", \"db_role\": \"t_bursty\", \"profile\": \"BURSTY_OLTP\", \"warehouse_lo\": 3, \"warehouse_hi\": 4}, {\"name\": \"analytic\", \"db_role\": \"t_analytic\", \"profile\": \"ANALYTICAL\", \"warehouse_lo\": 5, \"warehouse_hi\": 8}, {\"name\": \"mixed\", \"db_role\": \"t_mixed\", \"profile\": \"MIXED\", \"warehouse_lo\": 9, \"warehouse_hi\": 12}]"
+     },
+     {
+      "kind": "tool",
+      "name": "get_slo_status",
+      "input": {
+       "minutes": 30
+      },
+      "result": "[{\"tenant_role\": \"t_analytic\", \"query_class\": \"OLAP\", \"percentile\": 95, \"threshold_ms\": 2000.0, \"windows\": 9, \"observed_ms\": 32.35, \"windows_violating\": 0}, {\"tenant_role\": \"t_bursty\", \"query_class\": \"OLTP\", \"percentile\": 99, \"threshold_ms\": 150.0, \"windows\": 9, \"observed_ms\": 24.32, \"windows_violating\": 0}, {\"tenant_role\": \"t_mixed\", \"query_class\": \"OLTP\", \"percentile\": 99, \"threshold_ms\": 150.0, \"windows\": 9, \"observed_ms\": 22.61, \"windows_violating\": 0}, {\"tenant_role\": \"t_steady\", \"query_class\": \"OLTP\", \"percentile\": 99, \"threshold_ms\": 100.0, \"windows\": 9, \"observed_ms\": 24.38, \"windows_violating\": 0}]"
+     },
+     {
+      "kind": "tool",
+      "name": "get_top_queries",
+      "input": {
+       "limit": 10,
+       "minutes": 30
+      },
+      "result": "[{\"tenant_role\": \"t_mixed\", \"queryid\": \"-2339535960770512091\", \"query\": \"SELECT o_ol_cnt, count(*) AS order_count FROM ch.orders WHERE o_entry_d >= $1 AND o_entry_d < $2 AND EXISTS (   SELECT $3 FROM ch.order_line WHERE o_id = ol_o_id AND o_w_id = ol_w_id AND o_d_id = ol_d_id   AND ol_delivery_d >= o_entry_d) GROUP BY o_ol_cnt ORDER BY o_ol_cnt\", \"calls\": 16, \"total_exec_ms\": 10554.6, \"mean_exec_ms\": 659.664, \"rows\": 208, \"blocks_read_from_disk\": 6442, \"temp_blocks_written\": 0, \"wal_bytes\": 1344174}, {\"tenant_role\": \"t_mixed\", \"queryid\": \"7550991708391371773\", \"query\": \"SELECT o_ol_cnt, sum(CASE WHEN o_carrier_id = $2 OR o_carrier_id = $3 THEN $4 ELSE $5 END) AS high_line_count, sum(CASE WHEN o_carrier_id <> $6 AND o_carrier_id <> $7 THEN $8 ELSE $9 END) AS low_line_count FROM ch.orders, ch.order_line WHERE ol_w_id = o_w_id AND ol_d_id = o_d_id AND ol_o_id = o_id AND o_entry_d <= ol_delivery_d AND ol_delivery_d < $1 GROUP BY o_ol_cnt ORDER BY o_ol_cnt\", \"calls\": 16, \"total_exec_ms\": 8860.9, \"mean_exec_ms\": 553.807, \"rows\": 208, \"blocks_read_from_disk\": 0, \"temp_blocks_written\": 63759, \"wal_bytes\": 3164}, {\"tenant_role\": \"t_analytic\", \"queryid\": \"-5548738009041872292\", \"query\": \"SELECT ol_w_id, ol_d_id, count(*) AS lines, sum(ol_quantity) AS quantity, sum(ol_amount) AS amount FROM ch.order_line WHERE ol_i_id = $1 GROUP BY ol_w_id, ol_d_id ORDER BY amount DESC\", \"calls\": 204, \"total_exec_ms\": 4675.5, \"mean_exec_ms\": 22.919, \"rows\": 2073, \"blocks_read_from_disk\": 5572, \"temp_blocks_written\": 0, \"wal_bytes\": 0}, {\"tenant_role\": \"t_mixed\", \"queryid\": \"4474877661880400998\", \"query\": \"SELECT ol_number, sum(ol_quantity) AS sum_qty, sum(ol_amount) AS sum_amount, avg(ol_quantity) AS avg_qty, avg(ol_amount) AS avg_amount, count(*) AS count_order FROM ch.order_line WHERE ol_delivery_d > $1 GROUP BY ol_number ORDER BY ol_number\", \"calls\": 14, \"total_exec_ms\": 4516.6, \"mean_exec_ms\": 322.618, \"rows\": 210, \"blocks_read_from_disk\": 0, \"temp_blocks_written\": 0, \"wal_bytes\": 6204}, {\"tenant_role\": \"t_mixed\", \"queryid\": \"5200040818790547833\", \"query\": \"SELECT $3 * sum(CASE WHEN i_data LIKE $4 THEN ol_amount ELSE $5 END) / ($6 + sum(ol_amount)) AS promo_revenue FROM ch.order_line, ch.item WHERE ol_i_id = i_id AND ol_delivery_d >= $1 AND ol_delivery_d < $2\", \"calls\": 9, \"total_exec_ms\": 3626.6, \"mean_exec_ms\": 402.958, \"rows\": 9, \"blocks_read_from_disk\": 138, \"temp_blocks_written\": 0, \"wal_bytes\": 4208}, {\"tenant_role\": \"t_mixed\", \"queryid\": \"-5548738009041872292\", \"query\": \"SELECT ol_w_id, ol_d_id, count(*) AS lines, sum(ol_quantity) AS quantity, sum(ol_amount) AS amount FROM ch.order_line WHERE ol_i_id = $1 GROUP BY ol_w_id, ol_d_id ORDER BY amount DESC\", \"calls\": 14, \"total_exec_ms\": 3550.1, \"mean_exec_ms\": 253.58, \"rows\": 243, \"blocks_read_from_disk\": 21715, \"temp_blocks_written\": 0, \"wal_bytes\": 2521559}, {\"tenant_role\": \"t_mixed\", \"queryid\": \"7063904312902982432\", \"query\": \"SELECT sum(ol_amount) AS revenue FROM ch.order_line WHERE ol_delivery_d >= $1 AND ol_del"
+     },
+     {
+      "kind": "tool",
+      "name": "get_slo_status",
+      "input": {
+       "minutes": 30
+      },
+      "result": "[{\"tenant_role\": \"t_analytic\", \"query_class\": \"OLAP\", \"percentile\": 95, \"threshold_ms\": 2000.0, \"windows\": 11, \"observed_ms\": 30.92, \"windows_violating\": 0}, {\"tenant_role\": \"t_bursty\", \"query_class\": \"OLTP\", \"percentile\": 99, \"threshold_ms\": 150.0, \"windows\": 11, \"observed_ms\": 23.54, \"windows_violating\": 0}, {\"tenant_role\": \"t_mixed\", \"query_class\": \"OLTP\", \"percentile\": 99, \"threshold_ms\": 150.0, \"windows\": 11, \"observed_ms\": 22.27, \"windows_violating\": 0}, {\"tenant_role\": \"t_steady\", \"query_class\": \"OLTP\", \"percentile\": 99, \"threshold_ms\": 100.0, \"windows\": 11, \"observed_ms\": 23.59, \"windows_violating\": 0}]"
+     },
+     {
+      "kind": "tool",
+      "name": "get_top_queries",
+      "input": {
+       "limit": 20,
+       "minutes": 30,
+       "tenant_role": "t_bursty"
+      },
+      "result": "[{\"tenant_role\": \"t_bursty\", \"queryid\": \"8949533293995386249\", \"query\": \"INSERT INTO ch.order_line (ol_w_id, ol_d_id, ol_o_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_amount, ol_dist_info) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\", \"calls\": 9755, \"total_exec_ms\": 272.8, \"mean_exec_ms\": 0.028, \"rows\": 9755, \"blocks_read_from_disk\": 19, \"temp_blocks_written\": 0, \"wal_bytes\": 2881076}, {\"tenant_role\": \"t_bursty\", \"queryid\": \"-1988577089769077212\", \"query\": \"WITH delivered AS (UPDATE ch.order_line SET ol_delivery_d = now()   WHERE ol_w_id = $1 AND ol_d_id = $2 AND ol_o_id = $3 RETURNING ol_amount) SELECT coalesce(sum(ol_amount), $4) FROM delivered\", \"calls\": 800, \"total_exec_ms\": 168.1, \"mean_exec_ms\": 0.21, \"rows\": 800, \"blocks_read_from_disk\": 664, \"temp_blocks_written\": 0, \"wal_bytes\": 6902676}, {\"tenant_role\": \"t_bursty\", \"queryid\": \"7015490200978539187\", \"query\": \"INSERT INTO ch.orders (o_w_id, o_d_id, o_id, o_c_id, o_entry_d, o_ol_cnt, o_all_local) VALUES ($1, $2, $3, $4, now(), $5, $6)\", \"calls\": 975, \"total_exec_ms\": 141.6, \"mean_exec_ms\": 0.145, \"rows\": 975, \"blocks_read_from_disk\": 463, \"temp_blocks_written\": 0, \"wal_bytes\": 3987128}, {\"tenant_role\": \"t_bursty\", \"queryid\": \"7788730793269161208\", \"query\": \"SELECT count(DISTINCT s_i_id) FROM ch.order_line, ch.stock WHERE ol_w_id = $1 AND ol_d_id = $2 AND ol_o_id < $3 AND ol_o_id >= $4 AND s_w_id = $5 AND s_i_id = ol_i_id AND s_quantity < $6\", \"calls\": 86, \"total_exec_ms\": 127.0, \"mean_exec_ms\": 1.476, \"rows\": 86, \"blocks_read_from_disk\": 68, \"temp_blocks_written\": 0, \"wal_bytes\": 4670437}, {\"tenant_role\": \"t_bursty\", \"queryid\": \"-3429358231194028758\", \"query\": \"SELECT i_price, i_name, i_data FROM ch.item WHERE i_id = $1\", \"calls\": 9768, \"total_exec_ms\": 98.8, \"mean_exec_ms\": 0.01, \"rows\": 9755, \"blocks_read_from_disk\": 100, \"temp_blocks_written\": 0, \"wal_bytes\": 0}, {\"tenant_role\": \"t_bursty\", \"queryid\": \"917404681889556109\", \"query\": \"SELECT c_id FROM ch.customer WHERE c_w_id = $1 AND c_d_id = $2 AND c_last = $3 ORDER BY c_first\", \"calls\": 588, \"total_exec_ms\": 91.1, \"mean_exec_ms\": 0.155, \"rows\": 523, \"blocks_read_from_disk\": 333, \"temp_blocks_written\": 0, \"wal_bytes\": 1003846}, {\"tenant_role\": \"t_bursty\", \"queryid\": \"4080376624841904907\", \"query\": \"SELECT c_discount, c_last, c_credit, w_tax FROM ch.customer, ch.warehouse WHERE w_id = $1 AND c_w_id = w_id AND c_d_id = $2 AND c_id = $3\", \"calls\": 975, \"total_exec_ms\": 90.5, \"mean_exec_ms\": 0.093, \"rows\": 975, \"blocks_read_from_disk\": 277, \"temp_blocks_written\": 0, \"wal_bytes\": 1574941}, {\"tenant_role\": \"t_bursty\", \"queryid\": \"5982503301448830290\", \"query\": \"UPDATE ch.customer SET c_balance = c_balance + $1, c_delivery_cnt = c_delivery_cnt + $5 WHERE c_w_id = $2 AND c_d_id = $3 AND c_id = $4\", \"calls\": 800, \"total_exec_ms\": 74.8, \"mean_exec_ms\": 0.094, \"rows\": 800, \"blocks_read_from_disk\": 219, \"temp_blocks_written\": 0, \"wal_bytes\": 2562260}, {\"tenant_role\": \"t_bursty\", \"queryid\": \"2207627760539713604\", \"query\": \"UPDATE ch.ware"
+     },
+     {
+      "kind": "tool",
+      "name": "get_slo_status",
+      "input": {
+       "minutes": 30
+      },
+      "result": "[{\"tenant_role\": \"t_analytic\", \"query_class\": \"OLAP\", \"percentile\": 95, \"threshold_ms\": 2000.0, \"windows\": 14, \"observed_ms\": 29.78, \"windows_violating\": 0}, {\"tenant_role\": \"t_bursty\", \"query_class\": \"OLTP\", \"percentile\": 99, \"threshold_ms\": 150.0, \"windows\": 14, \"observed_ms\": 23.03, \"windows_violating\": 0}, {\"tenant_role\": \"t_mixed\", \"query_class\": \"OLTP\", \"percentile\": 99, \"threshold_ms\": 150.0, \"windows\": 14, \"observed_ms\": 21.8, \"windows_violating\": 0}, {\"tenant_role\": \"t_steady\", \"query_class\": \"OLTP\", \"percentile\": 99, \"threshold_ms\": 100.0, \"windows\": 14, \"observed_ms\": 22.85, \"windows_violating\": 0}]"
+     },
+     {
+      "kind": "tool",
+      "name": "get_top_queries",
+      "input": {
+       "limit": 10,
+       "minutes": 30,
+       "tenant_role": "t_steady"
+      },
+      "result": "[{\"tenant_role\": \"t_steady\", \"queryid\": \"8949533293995386249\", \"query\": \"INSERT INTO ch.order_line (ol_w_id, ol_d_id, ol_o_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_amount, ol_dist_info) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\", \"calls\": 13699, \"total_exec_ms\": 372.6, \"mean_exec_ms\": 0.027, \"rows\": 13699, \"blocks_read_from_disk\": 8, \"temp_blocks_written\": 0, \"wal_bytes\": 3052836}, {\"tenant_role\": \"t_steady\", \"queryid\": \"-3429358231194028758\", \"query\": \"SELECT i_price, i_name, i_data FROM ch.item WHERE i_id = $1\", \"calls\": 13710, \"total_exec_ms\": 184.5, \"mean_exec_ms\": 0.013, \"rows\": 13699, \"blocks_read_from_disk\": 164, \"temp_blocks_written\": 0, \"wal_bytes\": 0}, {\"tenant_role\": \"t_steady\", \"queryid\": \"7788730793269161208\", \"query\": \"SELECT count(DISTINCT s_i_id) FROM ch.order_line, ch.stock WHERE ol_w_id = $1 AND ol_d_id = $2 AND ol_o_id < $3 AND ol_o_id >= $4 AND s_w_id = $5 AND s_i_id = ol_i_id AND s_quantity < $6\", \"calls\": 129, \"total_exec_ms\": 180.8, \"mean_exec_ms\": 1.402, \"rows\": 129, \"blocks_read_from_disk\": 115, \"temp_blocks_written\": 0, \"wal_bytes\": 6980527}, {\"tenant_role\": \"t_steady\", \"queryid\": \"7015490200978539187\", \"query\": \"INSERT INTO ch.orders (o_w_id, o_d_id, o_id, o_c_id, o_entry_d, o_ol_cnt, o_all_local) VALUES ($1, $2, $3, $4, now(), $5, $6)\", \"calls\": 1380, \"total_exec_ms\": 169.5, \"mean_exec_ms\": 0.123, \"rows\": 1380, \"blocks_read_from_disk\": 556, \"temp_blocks_written\": 0, \"wal_bytes\": 5415597}, {\"tenant_role\": \"t_steady\", \"queryid\": \"-1988577089769077212\", \"query\": \"WITH delivered AS (UPDATE ch.order_line SET ol_delivery_d = now()   WHERE ol_w_id = $1 AND ol_d_id = $2 AND ol_o_id = $3 RETURNING ol_amount) SELECT coalesce(sum(ol_amount), $4) FROM delivered\", \"calls\": 1190, \"total_exec_ms\": 159.4, \"mean_exec_ms\": 0.134, \"rows\": 1190, \"blocks_read_from_disk\": 578, \"temp_blocks_written\": 0, \"wal_bytes\": 7820192}, {\"tenant_role\": \"t_steady\", \"queryid\": \"4080376624841904907\", \"query\": \"SELECT c_discount, c_last, c_credit, w_tax FROM ch.customer, ch.warehouse WHERE w_id = $1 AND c_w_id = w_id AND c_d_id = $2 AND c_id = $3\", \"calls\": 1380, \"total_exec_ms\": 133.7, \"mean_exec_ms\": 0.097, \"rows\": 1380, \"blocks_read_from_disk\": 276, \"temp_blocks_written\": 0, \"wal_bytes\": 1751880}, {\"tenant_role\": \"t_steady\", \"queryid\": \"917404681889556109\", \"query\": \"SELECT c_id FROM ch.customer WHERE c_w_id = $1 AND c_d_id = $2 AND c_last = $3 ORDER BY c_first\", \"calls\": 810, \"total_exec_ms\": 92.5, \"mean_exec_ms\": 0.114, \"rows\": 741, \"blocks_read_from_disk\": 360, \"temp_blocks_written\": 0, \"wal_bytes\": 1081453}, {\"tenant_role\": \"t_steady\", \"queryid\": \"5982503301448830290\", \"query\": \"UPDATE ch.customer SET c_balance = c_balance + $1, c_delivery_cnt = c_delivery_cnt + $5 WHERE c_w_id = $2 AND c_d_id = $3 AND c_id = $4\", \"calls\": 1190, \"total_exec_ms\": 82.8, \"mean_exec_ms\": 0.07, \"rows\": 1190, \"blocks_read_from_disk\": 217, \"temp_blocks_written\": 0, \"wal_bytes\": 3699156}, {\"tenant_role\": \"t_steady\", \"queryid\": \"-5044505674534385491\", \"query"
+     },
+     {
+      "kind": "tool",
+      "name": "get_table_profile",
+      "error": "unknown table 'ch.order_line'; known tables: ['customer', 'district', 'history', 'new_order', 'order_line', 'orders', 'stock', 'warehouse']",
+      "input": {
+       "table": "ch.order_line"
+      }
+     },
+     {
+      "kind": "tool",
+      "name": "get_top_queries",
+      "input": {
+       "limit": 10,
+       "minutes": 30,
+       "tenant_role": "t_analytic"
+      },
+      "result": "[{\"tenant_role\": \"t_analytic\", \"queryid\": \"-5548738009041872292\", \"query\": \"SELECT ol_w_id, ol_d_id, count(*) AS lines, sum(ol_quantity) AS quantity, sum(ol_amount) AS amount FROM ch.order_line WHERE ol_i_id = $1 GROUP BY ol_w_id, ol_d_id ORDER BY amount DESC\", \"calls\": 348, \"total_exec_ms\": 7789.3, \"mean_exec_ms\": 22.383, \"rows\": 3525, \"blocks_read_from_disk\": 5572, \"temp_blocks_written\": 0, \"wal_bytes\": 0}, {\"tenant_role\": \"t_analytic\", \"queryid\": \"-7446272809383647686\", \"query\": \"SELECT max(c_id) FROM ch.customer WHERE c_w_id = $1 AND c_d_id = $2\", \"calls\": 1, \"total_exec_ms\": 0.5, \"mean_exec_ms\": 0.499, \"rows\": 1, \"blocks_read_from_disk\": 3, \"temp_blocks_written\": 0, \"wal_bytes\": 0}, {\"tenant_role\": \"t_analytic\", \"queryid\": \"-4823401097940311187\", \"query\": \"SELECT min(w_id), max(w_id) FROM ch.warehouse\", \"calls\": 1, \"total_exec_ms\": 0.0, \"mean_exec_ms\": 0.038, \"rows\": 1, \"blocks_read_from_disk\": 0, \"temp_blocks_written\": 0, \"wal_bytes\": 0}, {\"tenant_role\": \"t_analytic\", \"queryid\": \"-5257419765819844300\", \"query\": \"SELECT max(i_id) FROM ch.item\", \"calls\": 1, \"total_exec_ms\": 0.0, \"mean_exec_ms\": 0.013, \"rows\": 1, \"blocks_read_from_disk\": 0, \"temp_blocks_written\": 0, \"wal_bytes\": 0}, {\"tenant_role\": \"t_analytic\", \"queryid\": \"-3688696628780506391\", \"query\": \"select $1\", \"calls\": 2, \"total_exec_ms\": 0.0, \"mean_exec_ms\": 0.006, \"rows\": 2, \"blocks_read_from_disk\": 0, \"temp_blocks_written\": 0, \"wal_bytes\": 0}]"
+     },
+     {
+      "kind": "tool",
+      "name": "get_table_profile",
+      "input": {
+       "table": "order_line"
+      },
+      "result": "{\"table\": \"order_line\", \"columns\": [\"ol_w_id\", \"ol_d_id\", \"ol_o_id\", \"ol_number\", \"ol_i_id\", \"ol_supply_w_id\", \"ol_delivery_d\", \"ol_quantity\", \"ol_amount\"], \"relations\": [{\"relation\": \"order_line\", \"total_bytes\": 0, \"live_rows\": 0, \"seq_scan\": 0, \"seq_tup_read\": 0, \"idx_scan\": 0, \"inserts\": 0, \"updates\": 0, \"deletes\": 0, \"rows_changed_since_analyze\": 0, \"last_analyzed\": null}, {\"relation\": \"order_line_t_analytic\", \"total_bytes\": 45744128, \"live_rows\": 0, \"seq_scan\": 0, \"seq_tup_read\": 0, \"idx_scan\": 382, \"inserts\": 0, \"updates\": 0, \"deletes\": 0, \"rows_changed_since_analyze\": 0, \"last_analyzed\": null}, {\"relation\": \"order_line_t_bursty\", \"total_bytes\": 320225280, \"live_rows\": 15293, \"seq_scan\": 0, \"seq_tup_read\": 0, \"idx_scan\": 1637, \"inserts\": 15484, \"updates\": 13780, \"deletes\": 0, \"rows_changed_since_analyze\": 29073, \"last_analyzed\": null}, {\"relation\": \"order_line_t_mixed\", \"total_bytes\": 220422144, \"live_rows\": 8584, \"seq_scan\": 0, \"seq_tup_read\": 0, \"idx_scan\": 44598, \"inserts\": 8655, \"updates\": 6552, \"deletes\": 0, \"rows_changed_since_analyze\": 15136, \"last_analyzed\": null}, {\"relation\": \"order_line_t_steady\", \"total_bytes\": 379871232, \"live_rows\": 18096, \"seq_scan\": 0, \"seq_tup_read\": 0, \"idx_scan\": 2033, \"inserts\": 18223, \"updates\": 16793, \"deletes\": 0, \"rows_changed_since_analyze\": 34889, \"last_analyzed\": null}], \"indexes\": [{\"relation\": \"order_line_t_analytic\", \"index\": \"order_line_t_analytic_pkey\", \"bytes\": 11370496, \"scans\": 382, \"definition\": \"CREATE UNIQUE INDEX order_line_t_analytic_pkey ON ch.order_line_t_analytic USING btree (ol_w_id, ol_d_id, ol_o_id, ol_number)\"}, {\"relation\": \"order_line_t_bursty\", \"index\": \"order_line_t_bursty_pkey\", \"bytes\": 88293376, \"scans\": 1637, \"definition\": \"CREATE UNIQUE INDEX order_line_t_bursty_pkey ON ch.order_line_t_bursty USING btree (ol_w_id, ol_d_id, ol_o_id, ol_number)\"}, {\"relation\": \"order_line_t_mixed\", \"index\": \"order_line_t_mixed_pkey\", \"bytes\": 50192384, \"scans\": 44598, \"definition\": \"CREATE UNIQUE INDEX order_line_t_mixed_pkey ON ch.order_line_t_mixed USING btree (ol_w_id, ol_d_id, ol_o_id, ol_number)\"}, {\"relation\": \"order_line_t_steady\", \"index\": \"order_line_t_steady_pkey\", \"bytes\": 105316352, \"scans\": 2033, \"definition\": \"CREATE UNIQUE INDEX order_line_t_steady_pkey ON ch.order_line_t_steady USING btree (ol_w_id, ol_d_id, ol_o_id, ol_number)\"}]}"
+     },
+     {
+      "kind": "tool",
+      "name": "explain_query",
+      "input": {
+       "queryid": "-5548738009041872292"
+      },
+      "result": "{\"explained\": true, \"plan\": \"Sort  (cost=122118.29..122118.58 rows=118 width=54)\\n  Sort Key: (sum(order_line.ol_amount)) DESC\\n  ->  Finalize GroupAggregate  (cost=122071.32..122114.22 rows=118 width=54)\\n        Group Key: order_line.ol_w_id, order_line.ol_d_id\\n        ->  Gather Merge  (cost=122071.32..122108.50 rows=283 width=54)\\n              Workers Planned: 2\\n              ->  Partial GroupAggregate  (cost=121071.30..121075.82 rows=118 width=54)\\n                    Group Key: order_line.ol_w_id, order_line.ol_d_id\\n                    ->  Sort  (cost=121071.30..121071.80 rows=203 width=14)\\n                          Sort Key: order_line.ol_w_id, order_line.ol_d_id\\n                          ->  Parallel Append  (cost=0.00..121063.51 rows=203 width=14)\\n                                ->  Parallel Seq Scan on order_line_t_steady order_line_1  (cost=0.00..46801.40 rows=88 width=14)\\n                                      Filter: (ol_i_id = $1)\\n                                ->  Parallel Seq Scan on order_line_t_bursty order_line_2  (cost=0.00..39867.21 rows=73 width=14)\\n                                      Filter: (ol_i_id = $1)\\n                                ->  Parallel Seq Scan on order_line_t_mixed order_line_4  (cost=0.00..28330.75 rows=37 width=14)\\n                                      Filter: (ol_i_id = $1)\\n                                ->  Parallel Seq Scan on order_line_t_analytic order_line_3  (cost=0.00..6063.14 rows=5 width=12)\\n                                      Filter: (ol_i_id = $1)\\nJIT:\\n  Functions: 24\\n  Options: Inlining false, Optimization false, Expressions true, Deforming true\"}"
+     },
+     {
+      "kind": "tool",
+      "name": "get_table_profile",
+      "input": {
+       "table": "order_line"
+      },
+      "result": "{\"table\": \"order_line\", \"columns\": [\"ol_w_id\", \"ol_d_id\", \"ol_o_id\", \"ol_number\", \"ol_i_id\", \"ol_supply_w_id\", \"ol_delivery_d\", \"ol_quantity\", \"ol_amount\"], \"relations\": [{\"relation\": \"order_line\", \"total_bytes\": 0, \"live_rows\": 0, \"seq_scan\": 0, \"seq_tup_read\": 0, \"idx_scan\": 0, \"inserts\": 0, \"updates\": 0, \"deletes\": 0, \"rows_changed_since_analyze\": 0, \"last_analyzed\": null}, {\"relation\": \"order_line_t_analytic\", \"total_bytes\": 45744128, \"live_rows\": 0, \"seq_scan\": 0, \"seq_tup_read\": 0, \"idx_scan\": 444, \"inserts\": 0, \"updates\": 0, \"deletes\": 0, \"rows_changed_since_analyze\": 0, \"last_analyzed\": null}, {\"relation\": \"order_line_t_bursty\", \"total_bytes\": 320716800, \"live_rows\": 17936, \"seq_scan\": 0, \"seq_tup_read\": 0, \"idx_scan\": 1927, \"inserts\": 18154, \"updates\": 16181, \"deletes\": 0, \"rows_changed_since_analyze\": 34117, \"last_analyzed\": null}, {\"relation\": \"order_line_t_mixed\", \"total_bytes\": 220471296, \"live_rows\": 10433, \"seq_scan\": 0, \"seq_tup_read\": 0, \"idx_scan\": 55298, \"inserts\": 10510, \"updates\": 7466, \"deletes\": 0, \"rows_changed_since_analyze\": 17899, \"last_analyzed\": null}, {\"relation\": \"order_line_t_steady\", \"total_bytes\": 380370944, \"live_rows\": 21250, \"seq_scan\": 0, \"seq_tup_read\": 0, \"idx_scan\": 2431, \"inserts\": 21406, \"updates\": 20292, \"deletes\": 0, \"rows_changed_since_analyze\": 41542, \"last_analyzed\": null}], \"indexes\": [{\"relation\": \"order_line_t_analytic\", \"index\": \"order_line_t_analytic_pkey\", \"bytes\": 11370496, \"scans\": 444, \"definition\": \"CREATE UNIQUE INDEX order_line_t_analytic_pkey ON ch.order_line_t_analytic USING btree (ol_w_id, ol_d_id, ol_o_id, ol_number)\"}, {\"relation\": \"order_line_t_bursty\", \"index\": \"order_line_t_bursty_pkey\", \"bytes\": 88440832, \"scans\": 1927, \"definition\": \"CREATE UNIQUE INDEX order_line_t_bursty_pkey ON ch.order_line_t_bursty USING btree (ol_w_id, ol_d_id, ol_o_id, ol_number)\"}, {\"relation\": \"order_line_t_mixed\", \"index\": \"order_line_t_mixed_pkey\", \"bytes\": 50241536, \"scans\": 55298, \"definition\": \"CREATE UNIQUE INDEX order_line_t_mixed_pkey ON ch.order_line_t_mixed USING btree (ol_w_id, ol_d_id, ol_o_id, ol_number)\"}, {\"relation\": \"order_line_t_steady\", \"index\": \"order_line_t_steady_pkey\", \"bytes\": 105414656, \"scans\": 2431, \"definition\": \"CREATE UNIQUE INDEX order_line_t_steady_pkey ON ch.order_line_t_steady USING btree (ol_w_id, ol_d_id, ol_o_id, ol_number)\"}]}"
+     },
+     {
+      "kind": "tool",
+      "name": "whatif_index",
+      "input": {
+       "table": "order_line",
+       "columns": [
+        "ol_i_id"
+       ],
+       "tenant_role": "t_analytic"
+      },
+      "result": "{\"supported\": true, \"explained\": 7, \"improved\": 2, \"estimated_index_bytes\": 8347648, \"queries\": [{\"query\": \"SELECT ol_w_id, ol_d_id, count(*) AS lines, sum(ol_quantity) AS quantity, sum(ol_amount) AS amount FROM ch.order_line WHERE ol_i_id = $1 GROUP BY ol_w_id, ol_d_id ORDER BY amount DESC\", \"cost_before\": 7065.23, \"cost_after\": 54.93, \"ratio\": 0.007774693817469496}, {\"query\": \"SELECT ol_w_id, ol_d_id, count(*) AS lines, sum(ol_quantity) AS quantity, sum(ol_amount) AS amount FROM ch.order_line WHERE ol_i_id = $1 GROUP BY ol_w_id, ol_d_id ORDER BY amount DESC\", \"cost_before\": 7065.23, \"cost_after\": 54.93, \"ratio\": 0.007774693817469496}, {\"query\": \"SELECT o_ol_cnt, count(*) AS order_count FROM ch.orders WHERE o_entry_d >= $1 AND o_entry_d < $2 AND EXISTS (   SELECT $3 FROM ch.order_line WHERE o_id = ol_o_id AND o_w_id = ol_w_id AND o_d_id = ol_d_id   AND ol_delivery_d >= o_entry_d) GROUP BY o_ol_cnt ORDER BY o_ol_cnt\", \"cost_before\": 20153.69, \"cost_after\": 20153.69, \"ratio\": 1.0}, {\"query\": \"SELECT $3 * sum(CASE WHEN i_data LIKE $4 THEN ol_amount ELSE $5 END) / ($6 + sum(ol_amount)) AS promo_revenue FROM ch.order_line, ch.item WHERE ol_i_id = i_id AND ol_delivery_d >= $1 AND ol_delivery_d < $2\", \"cost_before\": 8457.15, \"cost_after\": 8457.15, \"ratio\": 1.0}, {\"query\": \"SELECT ol_number, sum(ol_quantity) AS sum_qty, sum(ol_amount) AS sum_amount, avg(ol_quantity) AS avg_qty, avg(ol_amount) AS avg_amount, count(*) AS count_order FROM ch.order_line WHERE ol_delivery_d > $1 GROUP BY ol_number ORDER BY ol_number\", \"cost_before\": 7692.69, \"cost_after\": 7692.69, \"ratio\": 1.0}, {\"query\": \"SELECT sum(ol_amount) AS revenue FROM ch.order_line WHERE ol_delivery_d >= $1 AND ol_delivery_d < $2 AND ol_quantity BETWEEN $3 AND $4\", \"cost_before\": 8186.67, \"cost_after\": 8186.67, \"ratio\": 1.0}, {\"query\": \"SELECT ol_o_id, ol_w_id, ol_d_id, sum(ol_amount) AS revenue, o_entry_d FROM ch.customer, ch.new_order, ch.orders, ch.order_line WHERE c_state LIKE $1 AND c_id = o_c_id AND c_w_id = o_w_id AND c_d_id = o_d_id AND no_w_id = o_w_id AND no_d_id = o_d_id AND no_o_id = o_id AND ol_w_id = o_w_id AND ol_d_id = o_d_id AND ol_o_id = o_id AND o_entry_d > $2 GROUP BY ol_o_id, ol_w_id, ol_d_id, o_entry_d ORDER BY revenue DESC, o_entry_d LIMIT $3\", \"cost_before\": 23670.8, \"cost_after\": 23670.8, \"ratio\": 1.0}]}"
+     },
+     {
+      "kind": "tool",
+      "name": "get_history",
+      "input": {
+       "limit": 20
+      },
+      "result": "[{\"action\": {\"type\": \"create_index\", \"table\": \"order_line\", \"columns\": [\"ol_i_id\"], \"include\": [], \"tenant_role\": \"t_analytic\"}, \"source\": \"manual\", \"state\": \"ROLLED_BACK\", \"state_reason\": \"rolled back on request: e2e cleanup\", \"twin_decision\": \"INCONCLUSIVE\", \"canary_outcome\": \"HELD\", \"production_ratios\": {\"t_mixed/OLAP\": 0.732, \"t_mixed/OLTP\": 1.306, \"t_bursty/OLTP\": 1.024, \"t_steady/OLTP\": 1.319, \"t_analytic/OLAP\": 0.178}, \"created_at\": \"2026-10-11 12:53:23.709158+00:00\"}, {\"action\": {\"type\": \"drop_index\", \"index_name\": \"dbp_order_line_31b38afd_t_analytic\"}, \"source\": \"manual\", \"state\": \"ROLLED_BACK\", \"state_reason\": \"T3: contract breached in 2 of the last 3 windows: t_analytic/OLAP: p95 3.08x baseline, contract allows 1.15x\", \"twin_decision\": null, \"canary_outcome\": \"ROLLED_BACK\", \"production_ratios\": {\"t_mixed/OLAP\": 1.091, \"t_mixed/OLTP\": 0.97, \"t_bursty/OLTP\": 1.013, \"t_steady/OLTP\": 0.96, \"t_analytic/OLAP\": 3.076}, \"created_at\": \"2026-10-11 12:51:52.982540+00:00\"}, {\"action\": {\"type\": \"create_index\", \"table\": \"order_line\", \"columns\": [\"ol_i_id\"], \"include\": [], \"tenant_role\": \"t_analytic\"}, \"source\": \"manual\", \"state\": \"ROLLED_BACK\", \"state_reason\": \"rolled back on request: e2e cleanup\", \"twin_decision\": null, \"canary_outcome\": \"HELD\", \"production_ratios\": {\"t_mixed/OLAP\": 0.931, \"t_mixed/OLTP\": 1.045, \"t_bursty/OLTP\": 0.931, \"t_steady/OLTP\": 1.013, \"t_analytic/OLAP\": 0.146}, \"created_at\": \"2026-10-11 12:50:27.724268+00:00\"}, {\"action\": {\"type\": \"create_index\", \"table\": \"order_line\", \"columns\": [\"ol_i_id\"], \"include\": [], \"tenant_role\": \"t_analytic\"}, \"source\": \"manual\", \"state\": \"ROLLED_BACK\", \"state_reason\": \"rolled back on request: e2e cleanup\", \"twin_decision\": null, \"canary_outcome\": \"HELD\", \"production_ratios\": {\"t_mixed/OLAP\": 0.859, \"t_mixed/OLTP\": 0.896, \"t_bursty/OLTP\": 0.919, \"t_steady/OLTP\": 0.867, \"t_analytic/OLAP\": 0.069}, \"created_at\": \"2026-10-11 12:48:35.468372+00:00\"}, {\"action\": {\"type\": \"create_index\", \"table\": \"order_line\", \"columns\": [\"ol_i_id\"], \"include\": [], \"tenant_role\": \"t_analytic\"}, \"source\": \"manual\", \"state\": \"ROLLED_BACK\", \"state_reason\": \"rolled back on request: e2e cleanup\", \"twin_decision\": null, \"canary_outcome\": \"HELD\", \"production_ratios\": {\"t_mixed/OLAP\": 0.941, \"t_mixed/OLTP\": 0.926, \"t_bursty/OLTP\": 0.932, \"t_steady/OLTP\": 0.943, \"t_analytic/OLAP\": 0.072}, \"created_at\": \"2026-10-11 12:45:16.491297+00:00\"}, {\"action\": {\"type\": \"create_index\", \"table\": \"order_line\", \"columns\": [\"ol_i_id\"], \"include\": [], \"tenant_role\": \"t_analytic\"}, \"source\": \"manual\", \"state\": \"ROLLED_BACK\", \"state_reason\": \"rolled back on request: e2e cleanup\", \"twin_decision\": \"INCONCLUSIVE\", \"canary_outcome\": \"HELD\", \"production_ratios\": {\"t_mixed/OLAP\": 0.729, \"t_mixed/OLTP\": 0.465, \"t_bursty/OLTP\": 0.895, \"t_steady/OLTP\": 1.217, \"t_analytic/OLAP\": 0.078}, \"created_at\": \"2026-10-11 12:10:37.779492+00:00\"}, {\"action\": {\"type\": \"drop_index\", \"index_name\": \"dbp_order_line_31b38afd_t_analytic\"}, \"source\": \"manual\", \"state\": \"ROLLE"
+     }
+    ],
+    "usage": {
+     "requests": 14,
+     "input_tokens": 55909,
+     "output_tokens": 2025,
+     "cache_read_input_tokens": 0
+    },
+    "proposer": "agent",
+    "provider": "groq",
+    "stop_reason": "no_proposal",
+    "waited_for_rate_limit_s": 339.0
+   },
+   "gate_mode": "per_tenant",
+   "verification": "full",
+   "auto_approve": false,
+   "state": "PROPOSED",
+   "state_reason": "",
+   "created_at": "2026-10-12T05:15:58.596056Z",
+   "updated_at": "2026-10-12T05:15:58.596056Z"
+  }
+ ]
+}

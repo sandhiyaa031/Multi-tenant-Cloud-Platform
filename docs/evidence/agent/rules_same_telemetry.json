@@ -1,0 +1,114 @@
+[
+ {
+  "action": {
+   "type": "role_setting",
+   "tenant_role": "t_mixed",
+   "name": "work_mem",
+   "value": "65536"
+  },
+  "rationale": "t_mixed wrote 239017 temporary blocks in the window: its sorts and hashes spill to disk. Raising work_mem for this tenant only keeps them in memory without changing other tenants' limits.",
+  "evidence": {
+   "rule": "spills",
+   "temp_blocks_written": 239017
+  }
+ },
+ {
+  "action": {
+   "type": "create_index",
+   "table": "order_line",
+   "columns": [
+    "ol_i_id"
+   ],
+   "tenant_role": "t_analytic"
+  },
+  "rationale": "t_analytic spends 20893 ms on a query filtering order_line.ol_i_id with no index on it; the planner estimates an index cuts its cost to 1%. Built on this tenant's partition only, so other tenants' writes are not taxed.",
+  "evidence": {
+   "rule": "missing_index",
+   "queryid": "-5548738009041872292",
+   "planner_ratio": 0.007774693817469496,
+   "estimated_index_bytes": 8347648
+  }
+ },
+ {
+  "action": {
+   "type": "create_index",
+   "table": "order_line",
+   "columns": [
+    "ol_i_id"
+   ],
+   "tenant_role": "t_mixed"
+  },
+  "rationale": "t_mixed spends 9650 ms on a query filtering order_line.ol_i_id with no index on it; the planner estimates an index cuts its cost to 1%. Built on this tenant's partition only, so other tenants' writes are not taxed.",
+  "evidence": {
+   "rule": "missing_index",
+   "queryid": "-5548738009041872292",
+   "planner_ratio": 0.011800483633082247,
+   "estimated_index_bytes": 33701888
+  }
+ },
+ {
+  "action": {
+   "type": "analyze",
+   "table": "orders",
+   "tenant_role": "t_bursty"
+  },
+  "rationale": "12418 rows of orders_t_bursty changed since statistics were last gathered (180% of the table); the planner is estimating from an outdated picture.",
+  "evidence": {
+   "rule": "stale_statistics",
+   "rows_changed": 12418,
+   "live_rows": 6918
+  }
+ },
+ {
+  "action": {
+   "type": "analyze",
+   "table": "orders",
+   "tenant_role": "t_steady"
+  },
+  "rationale": "14377 rows of orders_t_steady changed since statistics were last gathered (186% of the table); the planner is estimating from an outdated picture.",
+  "evidence": {
+   "rule": "stale_statistics",
+   "rows_changed": 14377,
+   "live_rows": 7727
+  }
+ },
+ {
+  "action": {
+   "type": "analyze",
+   "table": "order_line",
+   "tenant_role": "t_bursty"
+  },
+  "rationale": "124054 rows of order_line_t_bursty changed since statistics were last gathered (180% of the table); the planner is estimating from an outdated picture.",
+  "evidence": {
+   "rule": "stale_statistics",
+   "rows_changed": 124054,
+   "live_rows": 68843
+  }
+ },
+ {
+  "action": {
+   "type": "analyze",
+   "table": "order_line",
+   "tenant_role": "t_mixed"
+  },
+  "rationale": "71881 rows of order_line_t_mixed changed since statistics were last gathered (187% of the table); the planner is estimating from an outdated picture.",
+  "evidence": {
+   "rule": "stale_statistics",
+   "rows_changed": 71881,
+   "live_rows": 38540
+  }
+ },
+ {
+  "action": {
+   "type": "analyze",
+   "table": "order_line",
+   "tenant_role": "t_steady"
+  },
+  "rationale": "143215 rows of order_line_t_steady changed since statistics were last gathered (187% of the table); the planner is estimating from an outdated picture.",
+  "evidence": {
+   "rule": "stale_statistics",
+   "rows_changed": 143215,
+   "live_rows": 76775
+  }
+ }
+]

@@ -1,0 +1,8 @@
+{
+ "status": 502,
+ "seconds": 326.5,
+ "hint": "",
+ "body": {
+  "detail": "the model API call failed: the model API's quota is used up: Rate limit reached for model `openai/gpt-oss-120b` in organization `org_<redacted>` service tier `on_demand` on tokens per day (TPD): Limit 200000, Used 194579, Requested 6766. Please try again in 9m41.04s. Need more tokens?"
+ }
+}

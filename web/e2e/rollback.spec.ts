@@ -36,8 +36,9 @@ test("a change that breaks the contract in production is rolled back by the cana
   await expect(current).toContainText("Canary running", { timeout: 2 * 60_000 });
 
   // Nobody clicks anything from here: the canary undoes the change by itself.
+  // The reason names every class over its limit, so a noisy neighbour may be listed before the tenant that lost its index.
   await expect(current).toContainText("Rolled back by the canary", { timeout: 8 * 60_000 });
-  await expect(page.getByText(/contract breached in 2 of the last 3 windows: t_analytic\/OLAP/).first()).toBeVisible();
+  await expect(page.getByText(/contract breached in 2 of the last 3 windows: .*t_analytic\/OLAP/).first()).toBeVisible();
   await expect(page.locator(".card", { hasText: "Inverse, used for rollback" }).getByText(/CREATE INDEX/)).toBeVisible();
   await expect(page.getByText(CRASH)).toHaveCount(0);
 

@@ -1,4 +1,4 @@
-# The LLM agent, live: three runs on 2026-10-12
+# The LLM agent, live: four runs on 2026-10-12
 
 The first times the agent of `controlplane/app/proposers/agent.py` ran against a real model. They were made after the
 closing evaluation, with no protocol written beforehand, on open-weight models served by Groq's free tier
@@ -13,6 +13,7 @@ cluster under the demo workload (`workload/profiles/demo.json`), laptop profile.
 | `run1.json` | `openai/gpt-oss-120b`, 05:09 UTC. 14 model calls, 361 s of which 339 s waiting for the per-minute limit, 55,909 input and 2,025 output tokens | **No proposal.** The model investigated (objectives, top queries per tenant, table profile, a plan, a what-if for an index on `order_line(ol_i_id)` for `t_analytic`, history) and used its fourteenth and last turn on another tool call. Stored as `no_action` with `escalate` |
 | `run2.json` | Same model, 05:19 UTC, after the two fixes below | **Refused by the provider** on the twelfth model call: the account's daily quota was used up. Nothing was stored and the trace of the eleven calls before it was lost |
 | `run3.json` | `openai/gpt-oss-20b` (a smaller model, with its own daily quota), 05:27 UTC. 12 model calls, 429 s of which 406 s waiting, 60,085 input and 5,090 output tokens | **A proposal:** an index on `order_line (ol_w_id, ol_d_id, ol_o_id, ol_delivery_d)` for `t_mixed` |
+| `run4_partial.json` | `openai/gpt-oss-120b` again, 09:09 UTC, with every fix in place | **Refused by the provider** on the ninth model call: the daily quota was used up again (the morning's runs still counted against it). Nothing was stored. The eight calls before it were kept in the API log, which is what this file is: tenants, objectives, latency, `t_mixed`'s top queries, two table profiles and a plan, with no observation asked for twice and the plan tool working on the statement it had failed on |
 | `run3_verification.json` | What DBPilot did with that proposal | T0 approve. T1 approve (planner cost improves for 1 of 15 observed queries). T2, 8 replay pairs, 10,991 transactions, 1,055 s: **INCONCLUSIVE**. Not applied |
 | `rules_same_telemetry.json` | The rule-based proposer on the same telemetry, minutes later, nothing stored | 8 proposals: sort memory for `t_mixed`, an index on `order_line(ol_i_id)` for `t_analytic` and for `t_mixed`, a statistics refresh for five partitions |
 

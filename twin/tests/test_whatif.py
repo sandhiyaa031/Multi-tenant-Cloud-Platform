@@ -73,3 +73,14 @@ def test_explain_returns_a_plan_or_the_reason_there_is_none():
     assert plan["explained"] and "order_line_t_a" in plan["plan"]
     refused = whatif.explain("SELECT * FROM ch.no_such_table")
     assert refused["explained"] is False and "does not exist" in refused["error"]
+
+
+def test_a_statement_with_placeholders_in_case_branches_can_be_explained_and_costed():
+    """As pg_stat_statements records it: the literals of a CASE are placeholders with no type to infer."""
+    counted = ("SELECT ol_w_id, sum(CASE WHEN ol_amount > $1 THEN $2 ELSE $3 END) AS big "
+               "FROM ch.order_line_t_a WHERE ol_i_id = $4 GROUP BY ol_w_id")
+    plan = whatif.explain(counted)
+    assert plan["explained"], plan
+    result = whatif.index_whatif(INDEX_FOR_T_A, [counted])
+    assert result["explained"] == 1 and result["improved"] == 1
+

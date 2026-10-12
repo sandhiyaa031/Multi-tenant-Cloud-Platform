@@ -45,7 +45,7 @@ models.
 - It repeated itself less than run 1 but still asked twice each for the objectives, the top queries, the table profile
   and the same what-if.
 - One tool failed on it: `explain_query` cannot plan a statement whose placeholders sit inside `sum(CASE ...)`
-  ("function sum(text) does not exist"). That is a limit of the tool, found by this run and not fixed.
+  ("function sum(text) does not exist"). That was a fault of the tool, found by this run and fixed afterwards (`twin/agent/whatif.py`); the planner what-if had been silently skipping such statements for the same reason.
 - The twin did not confirm the proposal. Its own target, `t_mixed/OLAP`, measured 0.91x with an interval of 0.76 to
   1.08: a benefit of 10% was not shown. The other classes measured 0.96x to 1.06x with intervals as wide as 0.77 to
   1.46. The proposal waits for a person, as an inconclusive one does. A plausible, well-worded rationale was not enough

@@ -69,8 +69,8 @@ Bonferroni correction: the 5% error allowance is divided among the tenant compar
 ## The evidence
 
 **14. How was it tested?**
-299 automated tests against real PostgreSQL instances (196 control plane, gate and engine; 36 data plane; 20 workload;
-47 twin), and three browser tests that drive the running stack end to end.
+300 automated tests against real PostgreSQL instances (196 control plane, gate and engine; 36 data plane; 20 workload;
+48 twin), and three browser tests that drive the running stack end to end.
 
 **15. Do passing tests show the idea works?**
 No. Tests show the software does what it was written to do. Whether the gate reaches correct decisions on real

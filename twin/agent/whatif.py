@@ -16,12 +16,30 @@ from agent import pg
 from dbpilot_core import actions
 
 
+# pg_stat_statements replaces every literal with a placeholder, also the ones in the branches of a
+# CASE. There the planner has nothing to infer a type from, takes text, and sum(text) does not exist.
+# Seen in the first live agent run: the most expensive query of a tenant could not be explained.
+_CASE_BRANCH = re.compile(r"\b(THEN|ELSE)\s+\$(\d+)\b(?!\s*::)", re.I)
+
+
+def _explain(conn: psycopg.Connection, options: str, query: str) -> list:
+    """EXPLAIN of a parameterised statement. GENERIC_PLAN plans `$1`-style text without parameter
+    values. If the statement does not plan, it is tried once more with the placeholders in CASE
+    branches typed as numbers; a statement that still fails raises."""
+    try:
+        return conn.execute(f"EXPLAIN ({options}) {query}").fetchall()
+    except psycopg.Error:
+        typed = _CASE_BRANCH.sub(r"\1 $\2::numeric", query)
+        if typed == query:
+            raise
+        return conn.execute(f"EXPLAIN ({options}) {typed}").fetchall()
+
+
 def _cost(conn: psycopg.Connection, query: str) -> float | None:
-    """Planner cost of a parameterised statement. GENERIC_PLAN plans `$1`-style
-    text without needing parameter values. Statements that cannot be explained
+    """Planner cost of a parameterised statement. Statements that cannot be explained
     (utility commands, writes on a standby that fail to plan) return None."""
     try:
-        row = conn.execute(f"EXPLAIN (GENERIC_PLAN, FORMAT JSON) {query}").fetchone()
+        row = _explain(conn, "GENERIC_PLAN, FORMAT JSON", query)[0]
     except psycopg.Error:
         return None
     plan = row[0] if isinstance(row[0], list) else json.loads(row[0])
@@ -32,7 +50,7 @@ def explain(query: str) -> dict:
     """The planner's plan for a parameterised statement, as text, from the twin source."""
     with pg.connect(pg.SOURCE_PORT) as conn:
         try:
-            rows = conn.execute(f"EXPLAIN (GENERIC_PLAN, VERBOSE off) {query}").fetchall()
+            rows = _explain(conn, "GENERIC_PLAN, VERBOSE off", query)
         except psycopg.Error as exc:
             return {"explained": False, "error": str(exc).splitlines()[0]}
     return {"explained": True, "plan": "\n".join(r[0] for r in rows)}

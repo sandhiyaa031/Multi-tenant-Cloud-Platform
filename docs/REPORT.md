@@ -26,7 +26,7 @@ and over a canary alone.
 
 | Part | State |
 |---|---|
-| Control plane: accounts, organizations, roles, audit, row-level isolation | Built; 196 automated tests with the gate and engine (172 at the time of the evaluation) |
+| Control plane: accounts, organizations, roles, audit, row-level isolation | Built; 200 automated tests with the gate and engine (172 at the time of the evaluation) |
 | Multi-tenant data plane: partition and role per tenant, row-level security, replica, pooler, least-privilege executor | Built; 36 tests |
 | Workload driver (TPC-C transactions and analytical queries, open loop) and evaluation harness | Built; 20 tests |
 | Telemetry collector | Built, tested |
@@ -34,7 +34,7 @@ and over a canary alone.
 | Digital twin: delayed standby, clones frozen at a known moment, replay, planner what-if | Built; 47 tests on a miniature data plane |
 | Safety gate, verification engine, canary controller | Built, tested |
 | Rule-based proposer | Built, tested, finds the demo's missing index on live telemetry |
-| LLM agent | Built and tested against a scripted model. Not run live during the project (no key). Afterwards run three times on free-tier open-weight models: one run produced a proposal, which the twin left inconclusive (section 8) |
+| LLM agent | Built and tested against a scripted model. Not run live during the project (no key). Afterwards run live five times on free-tier models (Groq, Gemini): two runs produced a proposal, both left inconclusive by the twin (section 8) |
 | Web console | Built; sign-in, session handling, every page and the change lifecycle covered by browser tests |
 
 Three browser scenarios drive the running stack end to end:
@@ -198,7 +198,7 @@ Records: [evidence/final/trials.jsonl](evidence/final/trials.jsonl); computed re
 - **That the twin's prediction matches production in general.** It matched for the benefit of one index (Part B);
   nothing else was measured.
 - **How often the canary raises a false alarm.** It did once in three no-op trials; three trials do not give a rate.
-- **Anything general about the LLM agent's proposals.** One live proposal from one small open-weight model exists
+- **Anything general about the LLM agent's proposals.** Two live proposals exist, one from a small open-weight model and one from Gemini
   (section 8). It shows the path works; it says nothing about how good proposals are.
 - **Rates with meaningful confidence intervals**, for anything.
 
@@ -256,12 +256,12 @@ gate, the engine or the canary decides, so the system that was measured above is
 - **Download evidence** (proposal page). Everything recorded about a proposal as one JSON file.
 - **A second model provider for the agent** (`controlplane/app/proposers/groq_client.py`). The agent loop can now run
   against a model served by Groq when no Anthropic key is set (`GROQ_API_KEY`, `GROQ_MODEL`, default
-  `openai/gpt-oss-120b`). It is an adapter around the same loop, tools and validation. Because a free Groq account
+  `openai/gpt-oss-120b`), or against Gemini (`GEMINI_API_KEY`, `GEMINI_MODEL`, default `gemini-3.8-flash`). It is an adapter around the same loop, tools and validation. Because a free Groq account
   allows 8,000 tokens a minute, the adapter waits out the per-minute limit and shows the model shortened versions of
   older tool results; both are recorded with the proposal. The adapter is covered by 12 tests against a scripted HTTP
   server. What happened when it was used is below.
 
-Tests after these additions: control plane, gate and engine 196 (was 172; 11 new in `tests/test_planning.py`, 12 in
+Tests after these additions: control plane, gate and engine 200 (was 172; 11 new in `tests/test_planning.py`, 16 in
 `tests/test_groq_client.py`, 1 in `tests/test_proposers.py`); the
 browser tests check the new card, the new column and the download.
 
@@ -299,3 +299,18 @@ it through.
 This is one completed proposal from one small model whose tool results had to be shortened. It shows the path works
 live. It shows nothing about how good a language model's proposals are, and the Anthropic path has still never been run
 against the live service.
+
+**A fifth run, on Gemini (same day, 16:40 UTC).** With a Gemini key in place of the Groq one, the same loop ran against
+`gemini-3.8-flash` through Google's OpenAI-compatible endpoint (free tier), with tool results shown whole. It made 9
+model calls and 16 tool calls in 98 seconds and proposed an index on `order_line(ol_i_id)` for `t_analytic`: the change
+the rule-based proposer also finds, and the one the closing evaluation used. Its rationale cited the planner's estimate
+(cost 7,065 to 55), the earlier canary result it read from the history tool (0.036x), and the fact that this partition
+receives no writes; each of those is in the tool results. Verification: static rules and the what-if passed it; the
+twin, after 8 pairs, showed the target's benefit (`t_analytic/OLAP` 0.14x, interval 0.06 to 0.32) and could not show
+the neighbours unharmed (0.98x to 1.03x, intervals up to 0.77 to 1.25), so the verdict was INCONCLUSIVE and it was not
+applied: the same outcome as when a person or a rule proposes that index. A first attempt minutes earlier failed on the
+provider's "high demand" answer after one call; the adapter now retries those.
+
+So of five live runs, two reached a proposal: one from a small open model that the twin did not support, and one from
+Gemini that matches the rules and that the twin supported as far as it can on this machine. That is still two
+examples, not an evaluation.

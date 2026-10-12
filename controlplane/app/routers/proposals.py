@@ -144,15 +144,18 @@ def _diagnose(user_id: UUID, org_id: UUID, cluster_id: UUID, body: DiagnoseIn) -
         import anthropic
 
         from app.proposers import agent
-        from app.proposers.groq_client import GroqClient, GroqError
+        from app.proposers import groq_client
+        from app.proposers.groq_client import GroqError
         if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
             model = None                      # agent.propose builds the Anthropic client itself
         elif os.environ.get("GROQ_API_KEY"):
-            model = GroqClient()
+            model = groq_client.GroqClient()
+        elif os.environ.get("GEMINI_API_KEY"):
+            model = groq_client.GeminiClient()
         else:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
-                                "the LLM agent is not configured (neither ANTHROPIC_API_KEY nor GROQ_API_KEY is set); "
-                                "the rule-based proposer is available")
+                                "the LLM agent is not configured (none of ANTHROPIC_API_KEY, GROQ_API_KEY and "
+                                "GEMINI_API_KEY is set); the rule-based proposer is available")
         try:
             return [agent.propose(observer, client=model, hint=body.hint)]
         except GroqError as exc:

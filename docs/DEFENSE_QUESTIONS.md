@@ -69,7 +69,7 @@ Bonferroni correction: the 5% error allowance is divided among the tenant compar
 ## The evidence
 
 **14. How was it tested?**
-300 automated tests against real PostgreSQL instances (196 control plane, gate and engine; 36 data plane; 20 workload;
+304 automated tests against real PostgreSQL instances (200 control plane, gate and engine; 36 data plane; 20 workload;
 48 twin), and three browser tests that drive the running stack end to end.
 
 **15. Do passing tests show the idea works?**
@@ -142,8 +142,10 @@ live during the project (no key). Afterwards it ran three times on small open-we
 Run 1 looked at the right things, found the same candidate index as the rules, and ran out of turns without deciding.
 Run 2 was cut off by the provider's daily quota. Run 3 proposed a different index, for `t_mixed`; static rules and
 the planner what-if passed it, and the twin returned inconclusive, with not even the target's benefit shown
-(0.91x, interval 0.76 to 1.08). It was not applied. So the path works live; nothing is claimed about the quality of an
-LLM's proposals from one example.
+(0.91x, interval 0.76 to 1.08). It was not applied. A later run on Gemini 3.8 Flash, with whole tool results, took
+98 seconds and proposed the index the rules also find (`ol_i_id` for `t_analytic`); the twin showed the target's
+benefit (0.14x) and could not show the neighbours unharmed, so that was inconclusive too. So the path works live;
+nothing is claimed about the quality of an LLM's proposals from two examples.
 
 **26b. What did the live runs teach you?**
 Three things. The agent needs to know its turn budget, or it keeps looking until the turns are gone. An adapter that
@@ -156,7 +158,7 @@ Verification, not the explanation, decided.
 
 **27. What are the main limitations?**
 One laptop whose speed varies 5 to 24% under load; all three planes on that one machine; a 0.3-scale dataset at half
-rate; no real cross-tenant harm found; the LLM agent run live only three times, on free-tier open models; few trials,
+rate; no real cross-tenant harm found; the LLM agent run live only five times, on free-tier models; few trials,
 so no rates with useful confidence intervals;
 the canary cannot see waiting at the connection pooler and raised one false alarm in three no-op trials.
 

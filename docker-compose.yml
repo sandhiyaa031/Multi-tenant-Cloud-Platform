@@ -74,6 +74,9 @@ services:
       # Used only when no Anthropic key is set: the same agent loop against a model served by Groq.
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      # Used when neither of the above is set: Gemini through its OpenAI-compatible endpoint.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
       # Tests only: the collector integration test runs inside this image.
       CONTROL_DB_COLLECTOR_URL: postgresql://dbpilot_collector:${CONTROL_DB_COLLECTOR_PASSWORD}@control-db:5432/dbpilot_control
       DP_MONITOR_PASSWORD: ${DATAPLANE_MONITOR_PASSWORD}

@@ -76,10 +76,11 @@ expensive read that filters an unindexed column and that the planner confirms an
 **LLM proposer (agent).** A language model given ten read-only tools (latency, top queries, plans, what-if, history...)
 and one tool with an effect, `propose_action` (`controlplane/app/proposers/agent.py`). Its output goes through exactly
 the same validation and verification as a rule's. It is tested against a scripted stand-in model. It can use an Anthropic model or, through
-`proposers/groq_client.py`, one served by Groq. **It was not run against a live model during the project.** Afterwards
+`proposers/groq_client.py`, one served by Groq or Google's Gemini. **It was not run against a live model during the project.** Afterwards
 it ran three times on small open models through Groq's free tier: one run ended without a decision, one was cut off by
-the provider's quota, and one produced a proposal that the twin left inconclusive (`docs/evidence/agent/`). That is an
-anecdote, not an evaluation of what such an agent proposes.
+the provider's quota, and one produced a proposal that the twin left inconclusive. A run on Gemini then proposed the same index the rules
+find, with the same twin verdict as when a person proposes it (`docs/evidence/agent/`). Those are anecdotes, not an
+evaluation of what such an agent proposes.
 
 ## Verifying changes
 
@@ -143,7 +144,7 @@ proposal with its verification steps, twin prediction and production result. The
 
 **Unit and integration tests.** Code that checks the software does what it was written to do: a viewer cannot write, a
 clone starts at the right moment, the gate rejects a synthetic harmful input. They answer "is it built correctly?".
-DBPilot has 300 of them plus browser tests.
+DBPilot has 304 of them plus browser tests.
 
 **Experimental evidence.** Measurements of how the system behaves on real workload: how often the gate is right, how
 much noise there is. They answer "does the idea work, and how well?". Passing tests say nothing about this. DBPilot's

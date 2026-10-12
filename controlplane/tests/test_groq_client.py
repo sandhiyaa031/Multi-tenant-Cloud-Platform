@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from app.proposers import agent
-from app.proposers.groq_client import CONTEXT_CHARS, RESULT_CHARS, STUB_CHARS, GroqClient, GroqError
+from app.proposers.groq_client import CONTEXT_CHARS, RESULT_CHARS, STUB_CHARS, GeminiClient, GroqClient, GroqError
 from tests.test_proposers import INDEX, FakeObserver, diagnose
 
 # `diagnosable` is a fixture of test_proposers; importing it makes it available here.
@@ -24,14 +24,15 @@ class Server:
     """Answers each request with the next scripted response and keeps what it was sent."""
 
     def __init__(self, *responses):
-        self.responses, self.requests, self.slept = list(responses), [], []
+        self.responses, self.requests, self.slept, self.urls = list(responses), [], [], []
 
-    def client(self, **kwargs) -> GroqClient:
+    def client(self, kind=GroqClient, **kwargs) -> GroqClient:
         def handle(request: httpx.Request) -> httpx.Response:
             self.requests.append(json.loads(request.content))
+            self.urls.append(str(request.url))
             return self.responses.pop(0)
-        return GroqClient(api_key="not-a-real-key", http=httpx.Client(transport=httpx.MockTransport(handle)),
-                          sleep=self.slept.append, **kwargs)
+        return kind(api_key="not-a-real-key", http=httpx.Client(transport=httpx.MockTransport(handle)),
+                    sleep=self.slept.append, **kwargs)
 
 
 PROPOSE = ("c2", "propose_action", json.dumps({"action": INDEX, "rationale": "Item lookups scan the partition."}))
@@ -160,9 +161,61 @@ def test_the_api_uses_groq_only_when_no_anthropic_key_is_set(client, org, diagno
     monkeypatch.setenv("GROQ_API_KEY", "not-a-real-key")
     server = Server(completion(calls=[PROPOSE]))
     monkeypatch.setattr("app.proposers.groq_client.GroqClient", lambda: server.client(model="some/model"))
+    monkeypatch.setenv("GEMINI_API_KEY", "not-a-real-key-either")        # Groq is asked first
     r = diagnose(client, org, diagnosable)
     assert r.status_code == 201, r.text
     [proposal] = r.json()
     # Stored like any other proposal: unapproved, to be verified, with the model named.
     assert proposal["state"] == "PROPOSED" and proposal["source"] == "agent"
     assert proposal["evidence"]["model"] == "some/model" and proposal["evidence"]["provider"] == "groq"
+
+
+# ── Gemini, through the same adapter ─────────────────────────────────────────
+
+def test_gemini_is_sent_whole_results_and_gets_its_thought_signature_back():
+    signed = httpx.Response(200, json={
+        "choices": [{"finish_reason": "tool_calls", "message": {"role": "assistant", "tool_calls": [{
+            "id": "g1", "type": "function", "function": {"name": "get_top_queries", "arguments": "{}"},
+            "extra_content": {"google": {"thought_signature": "opaque-signature"}}}]}}],
+        "usage": {"prompt_tokens": 900, "completion_tokens": 40}})
+    long_rows = [{"tenant_role": "t_analytic", "query": "SELECT " + "x" * 200, "n": i} for i in range(25)]
+    server = Server(signed, completion(calls=[PROPOSE]))
+    result = agent.propose(FakeObserver(top_queries=long_rows), client=server.client(GeminiClient))
+    assert result.evidence["provider"] == "gemini" and result.evidence["model"] == "gemini-3.8-flash"
+    assert "whole" in result.evidence["note"]
+    assert all("generativelanguage.googleapis.com" in url for url in server.urls)
+    sent = server.requests[1]["messages"]
+    # The provider's own attachment to its call goes back unchanged, and the tool result is not shortened.
+    assert sent[2]["tool_calls"][0]["extra_content"] == {"google": {"thought_signature": "opaque-signature"}}
+    assert len(sent[3]["content"]) > 5000 and json.loads(sent[3]["content"]) == long_rows
+
+
+def test_geminis_quota_error_is_read_from_its_own_shape():
+    spent = httpx.Response(429, json=[{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED",
+                                                "message": "You exceeded your current quota. Please retry in 26696.1s."}}])
+    with pytest.raises(GroqError, match="quota is used up: You exceeded your current quota"):
+        agent.propose(FakeObserver(), client=Server(spent).client(GeminiClient))
+    brief = httpx.Response(429, json=[{"error": {"message": "Please retry in 7.5s."}}])
+    server = Server(brief, completion(calls=[PROPOSE]))
+    assert agent.propose(FakeObserver(), client=server.client(GeminiClient)).action["type"] == "create_index"
+    assert server.slept == [8.5]
+
+
+def test_the_api_uses_gemini_when_it_is_the_only_key(client, org, diagnosable, monkeypatch):  # noqa: F811
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GROQ_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "not-a-real-key")
+    server = Server(completion(calls=[PROPOSE]))
+    monkeypatch.setattr("app.proposers.groq_client.GeminiClient", lambda: server.client(GeminiClient))
+    r = diagnose(client, org, diagnosable)
+    assert r.status_code == 201, r.text
+    assert r.json()[0]["evidence"]["provider"] == "gemini" and r.json()[0]["state"] == "PROPOSED"
+
+
+def test_a_briefly_overloaded_provider_is_tried_again_and_a_lasting_overload_is_reported():
+    busy = httpx.Response(503, json=[{"error": {"message": "This model is currently experiencing high demand."}}])
+    server = Server(busy, busy, completion(calls=[PROPOSE]))
+    result = agent.propose(FakeObserver(), client=server.client(GeminiClient))
+    assert result.action["type"] == "create_index" and server.slept == [15.0, 15.0]
+    with pytest.raises(GroqError, match="answered 503: This model is currently experiencing high demand"):
+        agent.propose(FakeObserver(), client=Server(*[busy] * 20).client(GeminiClient))

@@ -168,9 +168,8 @@ def propose(obs: Observer, client: anthropic.Anthropic | None = None, hint: str 
 
     def evidence(**extra) -> dict:
         # A client for another provider names its own model and says what it did to fit that provider's limits.
-        served = {"provider": client.provider, "waited_for_rate_limit_s": round(client.waited_s, 1),
-                  "note": "tool results were kept within a size budget; the oldest were shortened before "
-                          "being shown to the model"} if hasattr(client, "provider") else {}
+        served = ({"provider": client.provider, "waited_for_rate_limit_s": round(client.waited_s, 1), "note": client.note}
+                  if hasattr(client, "provider") else {})
         return {"proposer": "agent", "model": getattr(client, "model", MODEL), "trace": trace, "usage": usage, **served, **extra}
 
     for turn in range(MAX_TURNS):

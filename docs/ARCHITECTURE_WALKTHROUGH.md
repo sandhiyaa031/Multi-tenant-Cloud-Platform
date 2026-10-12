@@ -114,7 +114,8 @@ Three ways, all in `controlplane/app/routers/proposals.py`:
   carry a notice (`LAST_TURN`) that the next turn must decide. Every call is stored as a trace with the proposal. If the
   model API fails part-way nothing is stored, and the trace so far is written to the API log (`_log_partial_run` in
   `routers/proposals.py`). With no Anthropic key but a `GROQ_API_KEY`, the same loop
-  is given `proposers/groq_client.py: GroqClient`, which translates the one model call to Groq's API. With neither key the
+  is given `proposers/groq_client.py: GroqClient`, which translates the one model call to Groq's API; with only a
+  `GEMINI_API_KEY`, `GeminiClient` in the same file does the same for Gemini. With neither key the
   endpoint answers 503.
 
 The API only writes the row. It never verifies or applies anything.

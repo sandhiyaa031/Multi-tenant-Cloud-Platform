@@ -1,4 +1,4 @@
-# The LLM agent, live: four runs on 2026-10-12
+# The LLM agent, live: five runs on 2026-10-12
 
 The first times the agent of `controlplane/app/proposers/agent.py` ran against a real model. They were made after the
 closing evaluation, with no protocol written beforehand, on open-weight models served by Groq's free tier
@@ -15,6 +15,8 @@ cluster under the demo workload (`workload/profiles/demo.json`), laptop profile.
 | `run3.json` | `openai/gpt-oss-20b` (a smaller model, with its own daily quota), 05:27 UTC. 12 model calls, 429 s of which 406 s waiting, 60,085 input and 5,090 output tokens | **A proposal:** an index on `order_line (ol_w_id, ol_d_id, ol_o_id, ol_delivery_d)` for `t_mixed` |
 | `run4_partial.json` | `openai/gpt-oss-120b` again, 09:09 UTC, with every fix in place | **Refused by the provider** on the ninth model call: the daily quota was used up again (the morning's runs still counted against it). Nothing was stored. The eight calls before it were kept in the API log, which is what this file is: tenants, objectives, latency, `t_mixed`'s top queries, two table profiles and a plan, with no observation asked for twice and the plan tool working on the statement it had failed on |
 | `run3_verification.json` | What DBPilot did with that proposal | T0 approve. T1 approve (planner cost improves for 1 of 15 observed queries). T2, 8 replay pairs, 10,991 transactions, 1,055 s: **INCONCLUSIVE**. Not applied |
+| `run5_gemini.json` | `gemini-3.8-flash` through Google's OpenAI-compatible endpoint (free tier), 16:40 UTC, tool results shown whole. 9 model calls, 16 tool calls, 98 s, 200,092 input and 600 output tokens | **A proposal:** an index on `order_line (ol_i_id)` for `t_analytic`, the change the rule-based proposer also finds |
+| `run5_gemini_verification.json` | What DBPilot did with it | T0 approve. T1 approve (2 of 16 observed queries). T2, 8 pairs, 11,031 transactions, 1,050 s: **INCONCLUSIVE**. Target `t_analytic/OLAP` 0.14x, interval 0.06 to 0.32 (benefit shown); neighbours 0.98x to 1.03x with intervals up to 0.77 to 1.25 (not shown unharmed). Not applied |
 | `rules_same_telemetry.json` | The rule-based proposer on the same telemetry, minutes later, nothing stored | 8 proposals: sort memory for `t_mixed`, an index on `order_line(ol_i_id)` for `t_analytic` and for `t_mixed`, a statistics refresh for five partitions |
 
 ## What run 1 taught, and what was changed
@@ -52,8 +54,22 @@ models.
   1.46. The proposal waits for a person, as an inconclusive one does. A plausible, well-worded rationale was not enough
   to reach production, which is the point of the design.
 
+## What the Gemini run adds
+
+- With whole tool results and a wider rate limit the loop finished in under two minutes and nine model calls. It read the
+  history first and used what it found there.
+- Its three stated reasons (planner cost 7,065 to 55; an earlier canary ratio of 0.036x; no writes on that partition)
+  are each in the tool results. Its further claim that the index would reduce contention for every tenant is a
+  prediction, and the twin did not show it.
+- The twin gave it the same verdict it gave the same index when a person proposed it: benefit for the target shown,
+  neighbours not shown unharmed, inconclusive.
+- A first attempt failed after one call on the provider's "high demand" answer (503). The adapter now waits and
+  retries those.
+- The run differs from the Groq runs in the model, in seeing whole results, and in a history that by then contained
+  the earlier agent proposals. It is not a controlled comparison.
+
 ## What these runs do not show
 
-- How often a model reaches a decision, or how good its proposals are: there is one completed proposal.
+- How often a model reaches a decision, or how good its proposals are: there are two completed proposals.
 - Anything about a model that sees whole tool results. The free tier forced results to be shortened.
 - Anything about the Anthropic path, which has still never been run against the live service.

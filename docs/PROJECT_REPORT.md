@@ -1026,12 +1026,12 @@ gate, the engine or the canary decides, so the system that was measured in secti
 - **Download evidence** (proposal page). Everything recorded about a proposal as one JSON file.
 - **A second model provider for the agent** (`controlplane/app/proposers/groq_client.py`). The agent loop can now run
   against a model served by Groq when no Anthropic key is set (`GROQ_API_KEY`, `GROQ_MODEL`, default
-  `openai/gpt-oss-120b`). It is an adapter around the same loop, tools and validation. Because a free Groq account
+  `openai/gpt-oss-120b`), or against Gemini (`GEMINI_API_KEY`, `GEMINI_MODEL`, default `gemini-3.8-flash`). It is an adapter around the same loop, tools and validation. Because a free Groq account
   allows 8,000 tokens a minute, the adapter waits out the per-minute limit and shows the model shortened versions of
   older tool results; both are recorded with the proposal. The adapter is covered by 12 tests against a scripted HTTP
   server. What happened when it was used is below.
 
-Tests after these additions: control plane, gate and engine 196 (was 172; 11 new in `tests/test_planning.py`, 12 in
+Tests after these additions: control plane, gate and engine 200 (was 172; 11 new in `tests/test_planning.py`, 16 in
 `tests/test_groq_client.py`, 1 in `tests/test_proposers.py`); the
 browser tests check the new card, the new column and the download.
 
@@ -1040,7 +1040,7 @@ validation first: running the twin's two arms at the same time; a canary guard o
 sized by sample count instead of by time.
 
 Test counts elsewhere in this report (275 in total, 172 for the control plane) are those at the time of the
-evaluation; the control-plane suite now has 196.
+evaluation; the control-plane suite now has 200.
 
 #### The agent, live (2026-10-12)
 
@@ -1072,6 +1072,21 @@ it through.
 This is one completed proposal from one small model whose tool results had to be shortened. It shows the path works
 live. It shows nothing about how good a language model's proposals are, and the Anthropic path has still never been run
 against the live service.
+
+**A fifth run, on Gemini (same day, 16:40 UTC).** With a Gemini key in place of the Groq one, the same loop ran against
+`gemini-3.8-flash` through Google's OpenAI-compatible endpoint (free tier), with tool results shown whole. It made 9
+model calls and 16 tool calls in 98 seconds and proposed an index on `order_line(ol_i_id)` for `t_analytic`: the change
+the rule-based proposer also finds, and the one the closing evaluation used. Its rationale cited the planner's estimate
+(cost 7,065 to 55), the earlier canary result it read from the history tool (0.036x), and the fact that this partition
+receives no writes; each of those is in the tool results. Verification: static rules and the what-if passed it; the
+twin, after 8 pairs, showed the target's benefit (`t_analytic/OLAP` 0.14x, interval 0.06 to 0.32) and could not show
+the neighbours unharmed (0.98x to 1.03x, intervals up to 0.77 to 1.25), so the verdict was INCONCLUSIVE and it was not
+applied: the same outcome as when a person or a rule proposes that index. A first attempt minutes earlier failed on the
+provider's "high demand" answer after one call; the adapter now retries those.
+
+So of five live runs, two reached a proposal: one from a small open model that the twin did not support, and one from
+Gemini that matches the rules and that the twin supported as far as it can on this machine. That is still two
+examples, not an evaluation.
 
 ## 8. References
 

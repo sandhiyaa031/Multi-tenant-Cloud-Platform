@@ -68,7 +68,7 @@ Three groups of services, called planes, run together with Docker Compose:
 | Data plane | PostgreSQL primary and replica, connection pooler, four demo tenants, workload generator | Is the thing being protected |
 | Experimentation plane | Twin node agent with its clones | Tests changes |
 
-There are 300 automated tests and three browser test files that drive the whole running system.
+There are 304 automated tests and three browser test files that drive the whole running system.
 [ARCHITECTURE_WALKTHROUGH.md](ARCHITECTURE_WALKTHROUGH.md) has the map.
 
 ## 6. What happened when it was measured
@@ -113,8 +113,9 @@ false alarms too.
 free service. The first investigated sensibly and ran out of turns without deciding, partly because the adapter was
 hiding earlier tool results from it. The second was cut off by the provider's daily quota. The third proposed an index
 for `t_mixed`; its explanation read well but mixed up two queries, and the twin found no shown benefit even for the
-tenant it was meant to help, so it was not applied. One proposal is an anecdote: it shows the path works and that a
-confident explanation does not get a change into production. See [evidence/agent](evidence/agent/README.md).
+tenant it was meant to help, so it was not applied. A fifth run, on Gemini with whole tool results, took under two minutes and proposed the same index the rules find; the
+twin showed its benefit for the target and, as always here, could not show the neighbours unharmed. Two proposals are
+anecdotes: they show the path works and that a confident explanation does not get a change into production. See [evidence/agent](evidence/agent/README.md).
 
 ## 7. The honest summary
 
@@ -123,7 +124,7 @@ confident explanation does not get a change into production. See [evidence/agent
 | The whole loop runs, in a browser, on a real stack | The twin gate approving a safe change (on this laptop it cannot) |
 | The canary rolls back a harmful change by itself (and, once, a harmless one) | The twin catching a real harmful change (none was found) |
 | A gate that resamples inside a replay gives false alarms; one that judges pairs does not | That the twin predicts production in general (it matched for one index) |
-| With injected harm, the aggregate gate approves what the per-tenant gate refuses | Anything general about the language-model proposer (one live proposal from a small open model) |
+| With injected harm, the aggregate gate approves what the per-tenant gate refuses | Anything general about the language-model proposer (two live proposals, from a small open model and from Gemini) |
 
 The sentence to remember: **"we did not see any harm" and "we showed there was none" are different claims**, and most of
 the difficulty of the project is in the gap between them.

@@ -206,7 +206,9 @@ minutes, most of them spent waiting for the per-minute limit. The twin left
 that proposal inconclusive. Three lessons came out of it: tell the model how
 many turns it has; do not hide earlier tool results from it to save tokens,
 because it will ask again; and read a fluent rationale with suspicion, since
-the one produced joined two different queries. Whether the request parameters
+the one produced joined two different queries. A fifth run, on Gemini with whole tool
+results, finished in 98 seconds and proposed the index the rules also find.
+Whether the request parameters
 sent on the Anthropic path are accepted by that live service is still unknown.
 
 **Explain it.** "The model chooses among bounded actions; it never writes SQL

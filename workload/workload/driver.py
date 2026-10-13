@@ -23,6 +23,13 @@ from workload import olap, tpcc
 from workload.tpcc import TenantCtx
 
 MIXES = {"OLTP": tpcc.MIX, "OLAP": olap.MIX}
+# Workload variants (docs/evidence/bench_noise/protocol.md, Part 0). They differ in how the same
+# work reaches the database, not in what work is done.
+#   v0  simple protocol, one round trip per statement: the driver as first built
+#   v1  v0 with protocol-level prepared statements (the pooler tracks them per client)
+#   v2  v1 with New-Order's order lines batched into set-based statements
+#   v3  v2 run from inside the pooler's network namespace; the same code, deployed differently
+VARIANTS = ("v0", "v1", "v2", "v3")
 
 
 def percentile(sorted_values: list[float], p: float) -> float:
@@ -61,9 +68,16 @@ class Recorder:
     total_errors: dict = field(default_factory=lambda: defaultdict(int))
     total_dropped: dict = field(default_factory=lambda: defaultdict(int))
 
-    def ok(self, key: tuple, latency_ms: float) -> None:
+    # Every completed operation, when asked for: [wall-clock time it was scheduled, tenant, class,
+    # operation, latency in ms]. Per-operation percentiles and the DB-time share are computed from these.
+    ops_path: str | None = None
+    _ops: list = field(default_factory=list)
+
+    def ok(self, key: tuple, latency_ms: float, scheduled_wall: float | None = None) -> None:
         self._bucket[key].append(latency_ms)
         self.totals[key[:2]].append(latency_ms)
+        if self.ops_path and scheduled_wall is not None:
+            self._ops.append((round(scheduled_wall, 4), *key, round(latency_ms, 3)))
 
     def error(self, key: tuple) -> None:
         self._errors[key] += 1
@@ -108,6 +122,10 @@ class Recorder:
         self._bucket.clear()
         self._errors.clear()
         self._dropped.clear()
+        if self.ops_path and self._ops:
+            with open(self.ops_path, "a", encoding="utf-8") as f:
+                f.write("".join(json.dumps(op) + chr(10) for op in self._ops))
+            self._ops.clear()
         if self.out_path and lines:
             with open(self.out_path, "a", encoding="utf-8") as f:
                 f.write("\n".join(lines) + "\n")
@@ -156,12 +174,14 @@ async def stream(
     duration_s: float,
     max_inflight: int,
     only: list[str] | None = None,
+    mix: list | None = None,
 ) -> None:
     """One Poisson arrival process for one tenant and class. `only` restricts the
     class's mix to the named operations (used by scenarios that isolate one query)."""
-    names, fns, weights = zip(*[m for m in MIXES[cls] if not only or m[0] in only])
+    names, fns, weights = zip(*[m for m in (mix or MIXES[cls]) if not only or m[0] in only])
     loop = asyncio.get_running_loop()
     start = loop.time()
+    wall_offset = time.time() - start
     next_at = start
     inflight: set[asyncio.Task] = set()
 
@@ -170,7 +190,7 @@ async def stream(
         try:
             async with pool.connection() as conn:
                 await fn(conn, ctx)
-            recorder.ok(key, (loop.time() - scheduled) * 1000)
+            recorder.ok(key, (loop.time() - scheduled) * 1000, scheduled + wall_offset)
         except (psycopg.Error, asyncio.TimeoutError):
             recorder.error(key)
 
@@ -199,15 +219,20 @@ async def stream(
 
 async def run(profile: dict, dsn_for: Callable[[str], str], duration_s: float, out_path: str | None,
               interval_s: float = 10.0, pool_size: int = 16, max_inflight: int = 200,
-              recorder: Recorder | None = None) -> list[dict]:
-    recorder = recorder or Recorder(out_path=out_path, interval_s=interval_s)
+              recorder: Recorder | None = None, variant: str = "v0", ops_path: str | None = None) -> list[dict]:
+    if variant not in VARIANTS:
+        raise ValueError(f"unknown workload variant {variant!r}; one of {VARIANTS}")
+    recorder = recorder or Recorder(out_path=out_path, interval_s=interval_s, ops_path=ops_path)
+    # 0 prepares every statement on first use; None never prepares. The pooler (transaction mode,
+    # max_prepared_statements > 0) maps a client's prepared statements onto whichever server
+    # connection it hands out.
+    prepare = None if variant == "v0" else 0
+    oltp_mix = tpcc.MIX_BATCHED if variant in ("v2", "v3") else tpcc.MIX
     pools: dict[str, AsyncConnectionPool] = {}
     tasks = []
     try:
         for tenant in profile["tenants"]:
             role = tenant["role"]
-            # prepare_threshold=None: no server-side prepared statements, which a
-            # transaction-mode pooler cannot keep attached to one server connection.
             ctx = None
             for s in tenant["streams"]:
                 # One pool per class, labelled with application_name the way a real
@@ -215,7 +240,7 @@ async def run(profile: dict, dsn_for: Callable[[str], str], duration_s: float, o
                 # statement log to separate OLTP from OLAP.
                 pool = AsyncConnectionPool(
                     dsn_for(role) + f" application_name={s['class'].lower()}", min_size=2, max_size=pool_size,
-                    open=False, kwargs={"prepare_threshold": None, "autocommit": True},
+                    open=False, kwargs={"prepare_threshold": prepare, "autocommit": True},
                 )
                 await pool.open(wait=True, timeout=30)
                 pools[f"{role}/{s['class']}"] = pool
@@ -223,7 +248,8 @@ async def run(profile: dict, dsn_for: Callable[[str], str], duration_s: float, o
                 tasks.append(
                     asyncio.create_task(
                         stream(ctx, s["class"], burst_rate(s["rate"], s.get("burst")), pool, recorder,
-                               duration_s, max_inflight, s.get("only"))
+                               duration_s, max_inflight, s.get("only"),
+                               oltp_mix if s["class"] == "OLTP" else None)
                     )
                 )
 

@@ -102,6 +102,75 @@ async def new_order(conn: psycopg.AsyncConnection, ctx: TenantCtx) -> None:
             )
 
 
+async def new_order_batched(conn: psycopg.AsyncConnection, ctx: TenantCtx) -> None:
+    """New-Order with its order lines written set-based: one statement reads the items, one
+    updates the stock rows, one inserts the lines. It writes the same rows as `new_order` in
+    9 round trips instead of 30 to 40, which is how an application that batches its line
+    items (or a TPC-C kit built on stored procedures) behaves.
+
+    One difference from `new_order`: an order naming a missing item is detected when the
+    items are read, before any stock row is touched, so the 1% of orders that roll back do
+    less work first."""
+    w, d = ctx.warehouse(), random.randint(1, 10)
+    c = nurand(1023, 1, ctx.customers_per_district)
+    item_ids = sorted({nurand(8191, 1, ctx.items) for _ in range(random.randint(5, 15))})
+    if random.random() < 0.01:
+        item_ids[-1] = ctx.items + 1
+    lines = [(i, ctx.other_warehouse(w) if random.random() < 0.01 else w, random.randint(1, 10)) for i in item_ids]
+    all_local = int(all(sw == w for _, sw, _ in lines))
+
+    async with conn.transaction():
+        cur = conn.cursor()
+        await cur.execute(
+            "SELECT c_discount, c_last, c_credit, w_tax FROM ch.customer, ch.warehouse"
+            " WHERE w_id = %s AND c_w_id = w_id AND c_d_id = %s AND c_id = %s",
+            (w, d, c),
+        )
+        await cur.fetchone()
+        await cur.execute(
+            "UPDATE ch.district SET d_next_o_id = d_next_o_id + 1 WHERE d_w_id = %s AND d_id = %s"
+            " RETURNING d_next_o_id - 1, d_tax",
+            (w, d),
+        )
+        o_id = (await cur.fetchone())[0]
+        await cur.execute(
+            "INSERT INTO ch.orders (o_w_id, o_d_id, o_id, o_c_id, o_entry_d, o_ol_cnt, o_all_local)"
+            " VALUES (%s, %s, %s, %s, now(), %s, %s)",
+            (w, d, o_id, c, len(lines), all_local),
+        )
+        await cur.execute("INSERT INTO ch.new_order (no_w_id, no_d_id, no_o_id) VALUES (%s, %s, %s)", (w, d, o_id))
+
+        await cur.execute("SELECT i_id, i_price FROM ch.item WHERE i_id = ANY(%s::int[])", (item_ids,))
+        price = dict(await cur.fetchall())
+        if len(price) < len(lines):
+            raise psycopg.Rollback()
+        # The rows are locked in item order (ORDER BY ... FOR UPDATE) before they are changed,
+        # so two concurrent orders cannot deadlock on stock, as in `new_order`.
+        await cur.execute(
+            "WITH l AS (SELECT * FROM unnest(%s::int[], %s::int[], %s::int[]) AS l(i_id, supply_w, qty)),"
+            " held AS (SELECT s.s_w_id, s.s_i_id FROM ch.stock s JOIN l ON s.s_w_id = l.supply_w AND s.s_i_id = l.i_id"
+            "          ORDER BY s.s_i_id, s.s_w_id FOR UPDATE OF s)"
+            " UPDATE ch.stock s SET"
+            " s_quantity = CASE WHEN s.s_quantity >= l.qty + 10 THEN s.s_quantity - l.qty ELSE s.s_quantity - l.qty + 91 END,"
+            " s_ytd = s.s_ytd + l.qty, s_order_cnt = s.s_order_cnt + 1,"
+            " s_remote_cnt = s.s_remote_cnt + (l.supply_w <> %s)::int"
+            " FROM l, held WHERE s.s_w_id = l.supply_w AND s.s_i_id = l.i_id"
+            " AND held.s_w_id = s.s_w_id AND held.s_i_id = s.s_i_id"
+            f" RETURNING s.s_i_id, s.s_dist_{d:02d}",
+            ([i for i, _, _ in lines], [sw for _, sw, _ in lines], [q for _, _, q in lines], w),
+        )
+        dist_info = dict(await cur.fetchall())
+        await cur.execute(
+            "INSERT INTO ch.order_line (ol_w_id, ol_d_id, ol_o_id, ol_number, ol_i_id, ol_supply_w_id,"
+            " ol_quantity, ol_amount, ol_dist_info)"
+            " SELECT %s, %s, %s, n, i_id, supply_w, qty, amount, info"
+            " FROM unnest(%s::int[], %s::int[], %s::int[], %s::int[], %s::numeric[], %s::text[])"
+            "      AS l(n, i_id, supply_w, qty, amount, info)",
+            (w, d, o_id, list(range(1, len(lines) + 1)), [i for i, _, _ in lines], [sw for _, sw, _ in lines],
+             [q for _, _, q in lines], [q * price[i] for i, _, q in lines], [dist_info[i] for i, _, _ in lines]),
+        )
+
+
 async def payment(conn: psycopg.AsyncConnection, ctx: TenantCtx) -> None:
     w, d = ctx.warehouse(), random.randint(1, 10)
     amount = random.randint(100, 500000) / 100
@@ -233,3 +302,6 @@ MIX = [
     ("delivery", delivery, 4),
     ("stock_level", stock_level, 4),
 ]
+
+# The same mix with New-Order's lines batched (workload variants v2 and v3).
+MIX_BATCHED = [("new_order", new_order_batched, 45), *MIX[1:]]

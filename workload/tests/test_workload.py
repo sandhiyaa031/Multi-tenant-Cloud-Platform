@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 
 import psycopg
@@ -6,6 +7,14 @@ import pytest
 
 from workload import olap, tpcc
 from workload.driver import Recorder, burst_rate, load_ctx, percentile, run
+
+
+async def load_ctx_conn(conn, role: str) -> tpcc.TenantCtx:
+    """The tenant's context from a single connection (load_ctx wants a pool)."""
+    w_lo, w_hi = await (await conn.execute("SELECT min(w_id), max(w_id) FROM ch.warehouse")).fetchone()
+    customers = (await (await conn.execute("SELECT max(c_id) FROM ch.customer WHERE c_w_id = %s AND c_d_id = 1", (w_lo,))).fetchone())[0]
+    items = (await (await conn.execute("SELECT max(i_id) FROM ch.item")).fetchone())[0]
+    return tpcc.TenantCtx(role, w_lo, w_hi, customers, items)
 
 HOST = os.environ.get("DP_POOLER_HOST", "pgbouncer")
 PASSWORD = os.environ["DP_TENANT_PASSWORD"]
@@ -118,6 +127,50 @@ def test_new_order_advances_the_district_counter_and_writes_consistent_rows():
     assert after - before == orders_after - orders
     assert 18 <= orders_after - orders <= 20
     assert mismatched == 0
+
+
+def test_batched_new_order_writes_the_same_consistent_rows_as_the_line_by_line_one():
+    async def go():
+        async with await psycopg.AsyncConnection.connect(dsn("t_steady"), autocommit=True, prepare_threshold=0) as conn:
+            ctx = await load_ctx_conn(conn, "t_steady")
+            before = await (await conn.execute("SELECT sum(d_next_o_id), (SELECT sum(s_order_cnt) FROM ch.stock) FROM ch.district")).fetchone()
+            for _ in range(40):
+                await tpcc.new_order_batched(conn, ctx)
+            after = await (await conn.execute("SELECT sum(d_next_o_id), (SELECT sum(s_order_cnt) FROM ch.stock) FROM ch.district")).fetchone()
+            # Every order has exactly the lines its header says, each line has an amount and the district's info.
+            bad = await (await conn.execute(
+                "SELECT count(*) FROM ch.orders o WHERE o_entry_d > now() - interval '1 minute' AND o_ol_cnt <>"
+                " (SELECT count(*) FROM ch.order_line WHERE ol_w_id = o_w_id AND ol_d_id = o_d_id AND ol_o_id = o_id"
+                "  AND ol_amount > 0 AND length(ol_dist_info) = 24)")).fetchone()
+            lines = await (await conn.execute(
+                "SELECT count(*) FROM ch.order_line l JOIN ch.orders o ON ol_w_id = o_w_id AND ol_d_id = o_d_id AND ol_o_id = o_id"
+                " WHERE o_entry_d > now() - interval '1 minute'")).fetchone()
+            return before, after, bad[0], lines[0]
+
+    before, after, bad, lines = asyncio.run(go())
+    committed = after[0] - before[0]
+    assert 35 <= committed <= 40            # about 1% name a missing item and roll back, counter included
+    assert bad == 0
+    assert after[1] - before[1] >= committed * 5 and lines >= committed * 5
+
+
+@pytest.mark.parametrize("variant", ["v1", "v2"])
+def test_every_variant_runs_through_the_pooler_without_errors(variant, tmp_path):
+    profile = {"tenants": [{"role": "t_steady", "streams": [{"class": "OLTP", "rate": 30}]},
+                           {"role": "t_mixed", "streams": [{"class": "OLAP", "rate": 2}]}]}
+    ops = tmp_path / "ops.jsonl"
+    summary = asyncio.run(run(profile, dsn, duration_s=8, out_path=None, interval_s=4, variant=variant, ops_path=str(ops)))
+    assert sum(r["errors"] for r in summary) == 0 and sum(r["completed"] for r in summary) > 150
+    rows = [json.loads(line) for line in ops.read_text().splitlines()]
+    # One record per completed operation: when it was scheduled, who, what, how long.
+    assert len(rows) == sum(r["completed"] for r in summary)
+    assert {r[1] for r in rows} == {"t_steady", "t_mixed"} and all(r[4] > 0 for r in rows)
+    assert "new_order" in {r[3] for r in rows}
+
+
+def test_an_unknown_variant_is_refused():
+    with pytest.raises(ValueError, match="unknown workload variant"):
+        asyncio.run(run({"tenants": []}, dsn, duration_s=1, out_path=None, variant="v9"))
 
 
 def test_open_loop_run_hits_its_target_rate():

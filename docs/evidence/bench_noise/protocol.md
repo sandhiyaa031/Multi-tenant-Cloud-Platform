@@ -42,8 +42,13 @@ Question: what share of a transaction's client-side latency is spent executing s
 - Workload variants, each measured once with the same rates and seed:
   - V0: the driver as it is (simple protocol, 30 to 40 round trips per New-Order, through the pooler over the bridge).
   - V1: V0 with protocol-level prepared statements.
-  - V2: V1 with New-Order's order lines written set-based (one statement for the stock updates, one for the line
-    inserts) and independent statements of a transaction sent in one pipeline where the pooler supports it.
+  - V2: V1 with New-Order's order lines written set-based (one statement reads the items, one updates the stock rows,
+    one inserts the lines).
+
+    *Amended before any measurement (2026-10-13).* The first text also had independent statements "sent in one
+    pipeline where the pooler supports it". That is dropped: after batching, a New-Order has no two statements left
+    that do not depend on each other's results, and pipelining the two independent updates of Payment would have been
+    a second change measured together with the first.
   - V3: V2 with the driver in the pooler's network namespace (loopback).
 - V2 is admissible only if it is a workload a real application would send: batched line items are how TPC-C kits and
   ORMs with batching behave. It must pass the workload tests (same rows written, same consistency rules).
@@ -100,9 +105,15 @@ reported with it.
 
 - A repetition or pair is invalid, and listed as such, if: the power source changed during it; the driver's error rate
   or the twin's replay errors exceed 1%; a container restarted; or telemetry has a gap in it.
-- The checklist of `scripts/run_benchmark.sh` must pass before a run starts: AC power connected, system sleep disabled
-  for the run, CPU load from other processes below 10% of one core averaged over 30 s, Docker memory and CPU counts as
-  recorded in this protocol's run log. A failed check aborts the run.
+- The checklist of `scripts/run_benchmark.sh` must pass before a run starts: AC power connected; sleep held off for
+  the run; no single process outside Docker using more than half a core over 30 s; total host CPU at most 8% of the
+  machine over 30 s with the stack up and no load; Docker with 24 CPUs and about 9.9 GiB. A failed check aborts the
+  run. The power source is logged every 5 s during a run, and the System log's power events are checked afterwards.
+
+  *Amended before any measurement (2026-10-13).* The first text asked for "CPU load from other processes below 10% of
+  one core". That cannot be met or even measured as written: with the stack up and no load the host already sits at
+  about 6% of 24 CPUs (the Docker VM, the desktop, a lighting utility), and CPU used inside the VM cannot be told from
+  the stack's own. The thresholds above were set from that idle measurement, before any result existed.
 - The number of repetitions is fixed at 12 per part. Invalid ones are repeated at the end of the session, at most 4
   per part. Nothing is stopped early or extended because of what the numbers look like. If fewer than 10 valid
   repetitions exist after the extra ones, the part is reported as incomplete and run again from the start on another

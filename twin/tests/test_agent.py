@@ -59,8 +59,9 @@ def test_run_request_is_bounded(client):
 def test_run_result_is_returned_and_the_node_is_free_again(client, monkeypatch):
     seen = {}
 
-    def fake_run(action, window_s, repetitions, treatment_first):
+    def fake_run(action, window_s, repetitions, treatment_first, mode, seed):
         seen.update(action=action, window_s=window_s, repetitions=repetitions, treatment_first=treatment_first)
+        seen["how"] = (mode, seed)
         return {"arms": {}}
 
     monkeypatch.setattr(runner, "run", fake_run)
@@ -68,8 +69,11 @@ def test_run_result_is_returned_and_the_node_is_free_again(client, monkeypatch):
     r = client.post("/runs", headers=AUTH, json=body)
     assert r.status_code == 202
     assert wait_for(client, r.json()["run_id"]) == {"state": "DONE", "result": {"arms": {}}}
+    assert seen.pop("how") == ("sequential", 0)        # the procedure used unless another is asked for
     assert seen == body
     assert not agent_app.busy.locked()
+    # A procedure the agent does not know is refused before anything runs.
+    assert client.post("/runs", headers=AUTH, json={**body, "mode": "alternating"}).status_code == 422
 
 
 def test_only_one_run_at_a_time(client, monkeypatch):
@@ -100,7 +104,7 @@ def test_failed_run_is_reported_cleans_up_its_clone_and_frees_the_node(client, m
     while agent_app.busy.locked() and time.monotonic() < deadline:
         time.sleep(0.02)
     assert not agent_app.busy.locked()
-    assert client.stopped == [pg.WORK]  # the half-used clone is not left running
+    assert client.stopped == [pg.WORK, pg.WORK_B]  # no half-used clone is left running
     # The agent itself is unharmed: the next run is accepted.
     monkeypatch.setattr(runner, "run", lambda *a: {"arms": {}})
     assert client.post("/runs", headers=AUTH, json={}).status_code == 202

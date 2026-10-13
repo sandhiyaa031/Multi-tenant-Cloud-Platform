@@ -5,6 +5,7 @@
     base     a frozen copy of the source at one such moment
     work     a copy of base, promoted to a standalone database and replayed
              against; recreated for every arm of every run
+    work_b   a second such copy, for the procedures that keep both arms up at once
 """
 import os
 import shutil
@@ -16,8 +17,10 @@ from pathlib import Path
 import psycopg
 
 ROOT = Path(os.environ.get("TWIN_ROOT", "/twin"))
-SOURCE, BASE, WORK = ROOT / "source", ROOT / "base", ROOT / "work"
-SOURCE_PORT, WORK_PORT = 5500, 5501
+SOURCE, BASE, WORK, WORK_B = ROOT / "source", ROOT / "base", ROOT / "work", ROOT / "work_b"
+SOURCE_PORT, WORK_PORT, WORK_B_PORT = 5500, 5501, 5502
+# Cores for the delayed standby, when the clones and the replayers have their own.
+SOURCE_CPUS = os.environ.get("TWIN_SOURCE_CPUS")
 DELAY_S = int(os.environ.get("TWIN_DELAY_S", "180"))
 
 # Same engine settings as the production primary, so plans and memory behaviour
@@ -50,6 +53,7 @@ def start(datadir: Path, port: int, cpus: str | None = None) -> None:
     sizing = f"-c shared_buffers={SOURCE_BUFFERS} {SOURCE_OPTS}" if datadir == SOURCE else f"-c shared_buffers={CLONE_BUFFERS}"
     cmd = ["pg_ctl", "-D", str(datadir), "-w", "-t", "300", "-l", str(datadir.parent / f"{datadir.name}.log"),
            "-o", f"-p {port} {sizing} {ENGINE_OPTS}", "start"]
+    cpus = cpus or (SOURCE_CPUS if datadir == SOURCE else None)
     if cpus:
         # Pin the instance to its own cores so the replayer does not compete with it.
         cmd = ["taskset", "-c", cpus, *cmd]
@@ -149,18 +153,20 @@ def freeze_base() -> tuple[datetime, str, float]:
     return t0, lsn, seconds
 
 
-def fresh_work(cpus: str | None = None) -> float:
-    """A new standalone database at T0. Returns seconds spent preparing it."""
+def fresh_work(cpus: str | None = None, workdir: Path | None = None, port: int | None = None) -> float:
+    """A new standalone database at T0, in `workdir` (default: the first clone slot).
+    Returns seconds spent preparing it."""
+    workdir, port = workdir or WORK, port or WORK_PORT
     started = time.monotonic()
-    stop(WORK)
-    copy(BASE, WORK)
+    stop(workdir)
+    copy(BASE, workdir)
     # Flush the copy to disk now, so the kernel is not writing it back during the measurement.
-    _run("sync", "-f", str(WORK))
-    start(WORK, WORK_PORT, cpus)
-    if (WORK / "promote_manually").exists():
-        _run("pg_ctl", "-D", str(WORK), "-w", "-t", "120", "promote")
+    _run("sync", "-f", str(workdir))
+    start(workdir, port, cpus)
+    if (workdir / "promote_manually").exists():
+        _run("pg_ctl", "-D", str(workdir), "-w", "-t", "120", "promote")
     deadline = time.monotonic() + 300
-    with connect(WORK_PORT) as conn:
+    with connect(port) as conn:
         while conn.execute("SELECT pg_is_in_recovery()").fetchone()[0]:
             if time.monotonic() > deadline:
                 raise RuntimeError("clone did not finish recovery")

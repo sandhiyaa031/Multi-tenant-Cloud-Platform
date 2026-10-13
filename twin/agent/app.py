@@ -13,6 +13,7 @@ import traceback
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -58,6 +59,7 @@ async def lifespan(app: FastAPI):
         threading.Thread(target=_pruner, daemon=True).start()
     yield
     pg.stop(pg.WORK)
+    pg.stop(pg.WORK_B)
     pg.stop(pg.SOURCE)
 
 
@@ -74,6 +76,9 @@ class RunIn(BaseModel):
     window_s: float = Field(default=120, ge=10, le=1800)
     repetitions: int = Field(default=1, ge=1, le=5)
     treatment_first: bool = False
+    # How the two arms are run; see runner.py. `seed` fixes the block order of "interleaved".
+    mode: Literal["sequential", "simultaneous", "interleaved"] = "sequential"
+    seed: int = 0
 
 
 class WhatIfIn(BaseModel):
@@ -88,11 +93,13 @@ def status():
 
 def _execute(run_id: str, body: RunIn) -> None:
     try:
-        runs[run_id].update(state="DONE", result=runner.run(body.action, body.window_s, body.repetitions, body.treatment_first))
+        runs[run_id].update(state="DONE", result=runner.run(body.action, body.window_s, body.repetitions, body.treatment_first,
+                                                         body.mode, body.seed))
     except Exception as exc:  # reported to the caller, who decides what a failed run means
         log.error("run %s failed:\n%s", run_id, traceback.format_exc())
         runs[run_id].update(state="FAILED", error=f"{type(exc).__name__}: {exc}")
         pg.stop(pg.WORK)
+        pg.stop(pg.WORK_B)
     finally:
         busy.release()
 

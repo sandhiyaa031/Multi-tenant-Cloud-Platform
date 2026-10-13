@@ -7,6 +7,7 @@ The other documents in the study pack:
 
 | Document | Use it for |
 |---|---|
+| [COMPLETE_GUIDE.md](COMPLETE_GUIDE.md) | Everything in one document, from the problem to the current work, with a study plan |
 | [KEY_CONCEPTS.md](KEY_CONCEPTS.md) | Looking up a term you do not know |
 | [ARCHITECTURE_WALKTHROUGH.md](ARCHITECTURE_WALKTHROUGH.md) | Finding the code for a component and seeing what calls what |
 | [DEMO_GUIDE.md](DEMO_GUIDE.md) | Starting the system and showing it to someone |

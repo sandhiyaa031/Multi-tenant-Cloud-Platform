@@ -9,6 +9,7 @@ error is called coordinated omission.
 """
 import asyncio
 import json
+import logging
 import math
 import random
 import time
@@ -22,12 +23,14 @@ from psycopg_pool import AsyncConnectionPool
 from workload import olap, tpcc
 from workload.tpcc import TenantCtx
 
+log = logging.getLogger("dbpilot.workload")
+
 MIXES = {"OLTP": tpcc.MIX, "OLAP": olap.MIX}
 # Workload variants (docs/evidence/bench_noise/protocol.md, Part 0). They differ in how the same
 # work reaches the database, not in what work is done.
 #   v0  simple protocol, one round trip per statement: the driver as first built
 #   v1  v0 with protocol-level prepared statements (the pooler tracks them per client)
-#   v2  v1 with New-Order's order lines batched into set-based statements
+#   v2  v1 with New-Order reading its items in one statement and inserting its lines in one
 #   v3  v2 run from inside the pooler's network namespace; the same code, deployed differently
 VARIANTS = ("v0", "v1", "v2", "v3")
 
@@ -193,6 +196,11 @@ async def stream(
             recorder.ok(key, (loop.time() - scheduled) * 1000, scheduled + wall_offset)
         except (psycopg.Error, asyncio.TimeoutError):
             recorder.error(key)
+        except Exception:
+            # A fault in the transaction's own code is an error of the run too: nothing may be
+            # lost silently from a measurement.
+            recorder.error(key)
+            log.exception("operation %s of %s failed in the driver", name, ctx.role)
 
     while True:
         current = rate(next_at - start)

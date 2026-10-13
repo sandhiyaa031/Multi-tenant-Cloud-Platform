@@ -1,0 +1,85 @@
+# Benchmark mode: every container on fixed cores with a fixed memory limit, so that a
+# measurement taken today runs in the same configuration as one taken next week.
+#
+#   docker compose --env-file .env --env-file bench/bench.env \
+#       -f docker-compose.yml -f docker-compose.bench.yml up -d
+#
+# (scripts/run_benchmark.sh does this.) It fixes the configuration. It does not make the
+# machine steady: CPU frequency and whatever else the host does are outside a cgroup's reach,
+# which is why the noise floor is measured and not assumed.
+#
+# Core map on the 24 logical CPUs Docker sees here:
+#    0-3   production primary            7-8   load generator
+#    4-5   replica                       9-11  control plane (API, its database, collector, engine, web)
+#    6     connection pooler            12-15  twin clone, slot a
+#                                       16-19  twin clone, slot b
+#                                       20,21  the two replayer processes
+#                                       22-23  twin source (delayed standby) and the agent itself
+services:
+  control-db:
+    cpuset: "9-11"
+  api:
+    cpuset: "9-11"
+  web:
+    cpuset: "9-11"
+  collector:
+    cpuset: "9-11"
+  engine:
+    cpuset: "9-11"
+
+  twin:
+    cpuset: "12-23"
+    environment:
+      TWIN_INSTANCE_CPUS: "12-15"
+      TWIN_INSTANCE_CPUS_B: "16-19"
+      TWIN_REPLAY_CPUS: "20,21"
+      TWIN_SOURCE_CPUS: "22-23"
+
+  # The load generator for measurements. Arguments are those of the workload driver:
+  #   ... run --rm bench-load --profile profiles/eval.json --variant v2 --duration 330 --ops /results/x.jsonl
+  bench-load:
+    build: ./workload
+    profiles: ["bench"]
+    cpuset: "7-8"
+    mem_limit: 512m
+    environment:
+      DP_POOLER_HOST: pgbouncer
+      DP_TENANT_PASSWORD: ${DATAPLANE_TENANT_PASSWORD}
+    volumes:
+      - ./results:/results
+    depends_on:
+      - pgbouncer
+
+  # The same generator inside the pooler's network namespace: it reaches the pooler over
+  # loopback instead of the bridge (workload variant v3). It keeps its own cores.
+  bench-load-local:
+    build: ./workload
+    profiles: ["bench"]
+    cpuset: "7-8"
+    mem_limit: 512m
+    network_mode: "service:pgbouncer"
+    environment:
+      DP_POOLER_HOST: 127.0.0.1
+      DP_TENANT_PASSWORD: ${DATAPLANE_TENANT_PASSWORD}
+    volumes:
+      - ./results:/results
+    depends_on:
+      - pgbouncer
+
+  # Reads the statement log and the driver's records for the analysis scripts under tools/bench.
+  bench-tools:
+    build:
+      context: .
+      dockerfile: controlplane/Dockerfile
+    profiles: ["bench"]
+    cpuset: "9-11"
+    mem_limit: 768m
+    entrypoint: ["python"]
+    environment:
+      DP_LOG_DIR: /var/log/dbpilot
+      # The image runs its own code from its working directory; a script run by path needs to be told.
+      PYTHONPATH: /srv
+    volumes:
+      - dp-logs:/var/log/dbpilot:ro
+      - ./results:/results
+      - ./tools:/tools:ro

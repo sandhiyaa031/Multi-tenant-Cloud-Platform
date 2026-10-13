@@ -42,13 +42,17 @@ Question: what share of a transaction's client-side latency is spent executing s
 - Workload variants, each measured once with the same rates and seed:
   - V0: the driver as it is (simple protocol, 30 to 40 round trips per New-Order, through the pooler over the bridge).
   - V1: V0 with protocol-level prepared statements.
-  - V2: V1 with New-Order's order lines written set-based (one statement reads the items, one updates the stock rows,
-    one inserts the lines).
+  - V2: V1 with New-Order reading its items in one statement and inserting its order lines in one; stock rows are
+    updated one per statement, as in V0 (about 18 round trips instead of about 36).
 
     *Amended before any measurement (2026-10-13).* The first text also had independent statements "sent in one
     pipeline where the pooler supports it". That is dropped: after batching, a New-Order has no two statements left
     that do not depend on each other's results, and pipelining the two independent updates of Payment would have been
     a second change measured together with the first.
+
+    *Amended again before any measurement (2026-10-13).* The first text had the stock updates batched into one
+    statement too. During plumbing checks that statement crashed PostgreSQL 18.6 backends under concurrent orders
+    (`pg18_batched_update.md` in this folder), so the stock updates stay one row per statement.
   - V3: V2 with the driver in the pooler's network namespace (loopback).
 - V2 is admissible only if it is a workload a real application would send: batched line items are how TPC-C kits and
   ORMs with batching behave. It must pass the workload tests (same rows written, same consistency rules).

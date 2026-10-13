@@ -18,6 +18,7 @@ def main() -> int:
     parser.add_argument("--variant", default=os.environ.get("WORKLOAD_VARIANT", "v0"),
                         help="how the work reaches the database: v0 (default), v1, v2 or v3; see workload/driver.py")
     parser.add_argument("--ops", help="append every completed operation to this JSONL file")
+    parser.add_argument("--pool-size", type=int, default=16, help="connections per tenant and class")
     parser.add_argument("--rate-scale", type=float, default=1.0, help="multiply every stream's rate by this")
     args = parser.parse_args()
 
@@ -38,7 +39,7 @@ def main() -> int:
         for s in tenant["streams"]:
             s["rate"] *= args.rate_scale
     summary = asyncio.run(run(profile, dsn_for, args.duration, args.out, interval_s=args.interval,
-                              variant=args.variant, ops_path=args.ops))
+                              variant=args.variant, ops_path=args.ops, pool_size=args.pool_size))
 
     header = f"{'tenant':<12} {'class':<5} {'done':>7} {'per_s':>7} {'err':>5} {'drop':>5} {'p50':>9} {'p95':>9} {'p99':>9}"
     print(header)

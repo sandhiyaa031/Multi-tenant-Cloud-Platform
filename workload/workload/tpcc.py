@@ -103,10 +103,19 @@ async def new_order(conn: psycopg.AsyncConnection, ctx: TenantCtx) -> None:
 
 
 async def new_order_batched(conn: psycopg.AsyncConnection, ctx: TenantCtx) -> None:
-    """New-Order with its order lines written set-based: one statement reads the items, one
-    updates the stock rows, one inserts the lines. It writes the same rows as `new_order` in
-    9 round trips instead of 30 to 40, which is how an application that batches its line
-    items (or a TPC-C kit built on stored procedures) behaves.
+    """New-Order with fewer round trips: the items are read in one statement and the order
+    lines inserted in one, as an application that batches its line items does. The stock rows
+    are still updated one statement per line. It writes the same rows as `new_order` in about
+    18 round trips instead of about 36.
+
+    Why the stock updates are not batched too. Two set-based forms were tried. One locked the
+    rows in a CTE (SELECT ... ORDER BY ... FOR UPDATE) and joined the UPDATE to it: under
+    concurrent orders on the same stock rows it crashed PostgreSQL 18.6 backends with a
+    segmentation fault about every 18 seconds, and once left a backend spinning that could not
+    be terminated. The other, a plain UPDATE ... FROM unnest(...), did not crash in 66,000
+    orders but at least once returned fewer rows than the order had lines. Single-row updates
+    by primary key are the path every TPC-C kit exercises; a benchmark should not stand on a
+    statement that misbehaves. Details: docs/evidence/bench_noise/pg18_batched_update.md.
 
     One difference from `new_order`: an order naming a missing item is detected when the
     items are read, before any stock row is touched, so the 1% of orders that roll back do
@@ -144,22 +153,16 @@ async def new_order_batched(conn: psycopg.AsyncConnection, ctx: TenantCtx) -> No
         price = dict(await cur.fetchall())
         if len(price) < len(lines):
             raise psycopg.Rollback()
-        # The rows are locked in item order (ORDER BY ... FOR UPDATE) before they are changed,
-        # so two concurrent orders cannot deadlock on stock, as in `new_order`.
-        await cur.execute(
-            "WITH l AS (SELECT * FROM unnest(%s::int[], %s::int[], %s::int[]) AS l(i_id, supply_w, qty)),"
-            " held AS (SELECT s.s_w_id, s.s_i_id FROM ch.stock s JOIN l ON s.s_w_id = l.supply_w AND s.s_i_id = l.i_id"
-            "          ORDER BY s.s_i_id, s.s_w_id FOR UPDATE OF s)"
-            " UPDATE ch.stock s SET"
-            " s_quantity = CASE WHEN s.s_quantity >= l.qty + 10 THEN s.s_quantity - l.qty ELSE s.s_quantity - l.qty + 91 END,"
-            " s_ytd = s.s_ytd + l.qty, s_order_cnt = s.s_order_cnt + 1,"
-            " s_remote_cnt = s.s_remote_cnt + (l.supply_w <> %s)::int"
-            " FROM l, held WHERE s.s_w_id = l.supply_w AND s.s_i_id = l.i_id"
-            " AND held.s_w_id = s.s_w_id AND held.s_i_id = s.s_i_id"
-            f" RETURNING s.s_i_id, s.s_dist_{d:02d}",
-            ([i for i, _, _ in lines], [sw for _, sw, _ in lines], [q for _, _, q in lines], w),
-        )
-        dist_info = dict(await cur.fetchall())
+        dist_info = {}
+        for i_id, supply_w, qty in lines:
+            await cur.execute(
+                "UPDATE ch.stock SET"
+                " s_quantity = CASE WHEN s_quantity >= %s + 10 THEN s_quantity - %s ELSE s_quantity - %s + 91 END,"
+                " s_ytd = s_ytd + %s, s_order_cnt = s_order_cnt + 1, s_remote_cnt = s_remote_cnt + %s"
+                f" WHERE s_w_id = %s AND s_i_id = %s RETURNING s_dist_{d:02d}",
+                (qty, qty, qty, qty, int(supply_w != w), supply_w, i_id),
+            )
+            dist_info[i_id] = (await cur.fetchone())[0]
         await cur.execute(
             "INSERT INTO ch.order_line (ol_w_id, ol_d_id, ol_o_id, ol_number, ol_i_id, ol_supply_w_id,"
             " ol_quantity, ol_amount, ol_dist_info)"

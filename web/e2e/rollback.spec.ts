@@ -25,7 +25,7 @@ test("a change that breaks the contract in production is rolled back by the cana
   expect(index, "the name of the index that was built").toBeTruthy();
 
   // The harmful change: drop it again, straight to a canary.
-  await page.getByRole("link", { name: "Recommendations", exact: true }).click();
+  await page.getByRole("link", { name: "Proposals", exact: true }).click();
   await page.getByRole("button", { name: "Propose an action" }).click();
   await page.getByLabel("Action").fill(JSON.stringify({ type: "drop_index", index_name: index }));
   await page.getByLabel("Rationale").fill(`e2e rollback drop ${Date.now()}`);

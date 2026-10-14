@@ -52,7 +52,8 @@ function OverviewFor({ cluster }: { cluster: Cluster }) {
   const oltp = (latency.data ?? []).filter((r) => r.query_class === "OLTP");
   return (
     <div className="stack">
-      <PageHead title="Overview">What the cluster is doing now, who is meeting their objectives, and where each proposed change stands.</PageHead>
+      <PageHead title="Dashboard">What the cluster is doing now, who is meeting their objectives, and where each proposed change stands.</PageHead>
+      <div className="notice">New here? <Link to="/app/demo"><strong>Open the guided walkthrough</strong></Link>: a tenant's problem, the proposal, the twin's verdict, the decision, the canary and the audit trail, step by step.</div>
       {!cluster.primary_host && <div className="notice">This cluster has no primary address registered, so the collector is not observing it.</div>}
       {cluster.primary_host && tenants.length === 0 && <div className="notice">No tenants are registered on this cluster yet. Add them under <Link to="/app/tenants">Tenants</Link>.</div>}
       {cluster.primary_host && tenants.length > 0 && latency.data?.length === 0 && (

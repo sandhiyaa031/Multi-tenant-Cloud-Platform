@@ -43,7 +43,7 @@ test("a twin-verified proposal shows its pair-based verdict and can be decided, 
   await throughCanaryAndBack(page);
 
   // The twin's prediction now sits beside what production showed.
-  await page.getByRole("link", { name: "Experiments", exact: true }).click();
+  await page.goto("/app/experiments");
   await expect(page.getByRole("heading", { name: "Prediction against outcome" })).toBeVisible();
   await expect(page.getByText(CRASH)).toHaveCount(0);
 });

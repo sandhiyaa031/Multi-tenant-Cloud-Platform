@@ -20,7 +20,7 @@ test("the guided demo: a real change goes into production, and a harmful one is 
   await signIn(page);
   await undoEarlierRuns(page);
   try {
-    await page.getByRole("link", { name: "Guided demo", exact: true }).click();
+    await page.getByRole("link", { name: "Open the guided walkthrough" }).click();
     await expect(page.getByRole("heading", { name: "Guided demo", level: 1 })).toBeVisible();
     const step = (n: number) => page.locator(".card", { has: page.getByRole("heading", { name: new RegExp(`^${n}\\. `) }) });
 
@@ -137,16 +137,16 @@ test("a viewer sees the pages and cannot act", async ({ page }) => {
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page).toHaveURL(/\/app\/overview/);
 
-    await page.getByRole("link", { name: "Guided demo", exact: true }).click();
+    await page.getByRole("link", { name: "Open the guided walkthrough" }).click();
     await expect(page.getByText("Proposing needs the operator role")).toBeVisible();
     await expect(page.getByRole("button", { name: "Run the rule-based proposer" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Override and approve|Approve for canary|Reject|Roll back/ })).toHaveCount(0);
     await expect(page.getByText(/t_analytic runs analytical queries/)).toBeVisible();        // reading is allowed
 
-    await page.getByRole("navigation").getByRole("link", { name: "Organizations", exact: true }).click();
+    await page.locator("header").getByRole("link", { name: "Organizations", exact: true }).click();
     await expect(page.getByText(/You are a viewer here/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Archive this organization" })).toHaveCount(0);
-    await page.getByRole("navigation").getByRole("link", { name: "Settings", exact: true }).click();
+    await page.locator("header").getByRole("link", { name: "Settings", exact: true }).click();
     await expect(page.getByRole("button", { name: "Invite" })).toHaveCount(0);
 
     // And the API refuses what the page does not offer.

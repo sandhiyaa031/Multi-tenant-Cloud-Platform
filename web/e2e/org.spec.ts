@@ -24,7 +24,7 @@ async function freshSession(page: Page) {
 test("an organization created in the browser is persisted, and one created through the API appears in the browser", async ({ page }) => {
   page.on("dialog", (d) => d.accept());
   await signIn(page);
-  await page.getByRole("link", { name: "Organizations", exact: true }).click();
+  await page.locator("header").getByRole("link", { name: "Organizations", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Organizations", level: 1 })).toBeVisible();
   // The explanation of what an organization is, and is not.
   await expect(page.getByText("does not create a cluster, a database role or a")).toBeVisible();
@@ -64,9 +64,9 @@ test("an organization created in the browser is persisted, and one created throu
   await row(FROM_UI).getByRole("button", { name: "Switch to it" }).click();
   await expect(page).toHaveURL(/\/app\/organizations/);
   await expect(page.getByText(`The current organization: ${FROM_UI}`)).toBeVisible();
-  await page.getByRole("link", { name: "Overview", exact: true }).click();
-  await expect(page.getByText("No cluster is registered for this organization yet")).toBeVisible();
-  await page.getByRole("link", { name: "Organizations", exact: true }).click();
+  await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+  await expect(page.getByText("has no database registered")).toBeVisible();
+  await page.locator("header").getByRole("link", { name: "Organizations", exact: true }).click();
 
   // ── rename: the name changes and the identifier does not ───────────────────────
   const renamed = `${FROM_UI} renamed`;

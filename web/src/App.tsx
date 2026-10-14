@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { api, can, getToken, setToken, useApi, type Cluster, type Org, type Session, type Tenant } from "./api";
+import { api, can, getToken, setToken, useApi, type Cluster, type Org, type OrgSummary, type Session, type Tenant } from "./api";
 import { Badge, ErrorBoundary, tenantColors } from "./ui";
 import { Architecture, Forgot, Landing, Login, Product, Reset, Signup } from "./pages/Public";
 import { Health, Overview, Queries, Tenants, Workloads } from "./pages/Observe";
@@ -39,11 +39,7 @@ function AuthProvider({ children }: { children: ReactNode }) {
 }
 
 const NAV: [string, [string, string][]][] = [
-  ["Start here", [["demo", "Guided demo"]]],
-  ["Observe", [["overview", "Overview"], ["tenants", "Tenants"], ["workloads", "Workloads"], ["queries", "Query Intelligence"], ["health", "Database Health"]]],
-  ["Optimise", [["agent", "Agent Console"], ["recommendations", "Recommendations"], ["twin", "Digital Twin Lab"], ["verification", "Verification"], ["canary", "Canary Deployments"]]],
-  ["Evidence", [["experiments", "Experiments"], ["audit", "Audit History"]]],
-  ["Organization", [["organizations", "Organizations"], ["settings", "Settings"]]],
+  ["", [["overview", "Dashboard"], ["tenants", "Tenants"], ["recommendations", "Proposals"], ["twin", "Digital Twin"], ["canary", "Canary"], ["audit", "Audit History"]]],
 ];
 
 // Whether the collector is still writing snapshots of this cluster. It records the instance
@@ -91,7 +87,7 @@ function Shell() {
           <nav className="nav">
             {NAV.map(([group, items]) => (
               <div key={group}>
-                <div className="nav-group">{group}</div>
+                {group && <div className="nav-group">{group}</div>}
                 {items.map(([to, label]) => <NavLink key={to} to={`/app/${to}`}>{label}</NavLink>)}
               </div>
             ))}
@@ -114,6 +110,8 @@ function Shell() {
                   {me.orgs.map((o) => <option key={o.id} value={o.slug}>{o.name}</option>)}
                 </select>
               ) : <span>{me.org.name}</span>}
+              <Link to="/app/organizations">Organizations</Link>
+              <Link to="/app/settings">Settings</Link>
               <span className="badge info"><span className="dot" />{me.org.role.toLowerCase()}</span>
               <span className="muted">{me.email}</span>
               <button onClick={() => { signOut(); navigate("/"); }}>Sign out</button>
@@ -130,12 +128,20 @@ function Shell() {
 export function NeedCluster({ children }: { children: (cluster: Cluster) => ReactNode }) {
   const { cluster } = useCluster();
   const { me } = useAuth();
-  if (!cluster) return (
-    <div className="empty">
-      No cluster is registered for this organization yet.{" "}
-      {can(me?.org.role, "ADMIN") ? <>Register one under <Link to="/app/settings">Settings</Link>.</> : "An admin can register one under Settings."}
-    </div>
-  );
+  const orgs = useApi<OrgSummary[]>(cluster ? null : "/orgs");
+  if (!cluster) {
+    const withData = (orgs.data ?? []).filter((o) => !o.current && o.clusters > 0);
+    return (
+      <div className="empty">
+        <p><strong>{me?.org.name}</strong> has no database registered, so there is nothing to show here: DBPilot only shows what it observes.</p>
+        {withData.length > 0 && (
+          <p>You belong to {withData.length === 1 ? "an organization" : "organizations"} that does: {withData.map((o) => (
+            <button key={o.id} className="primary" style={{ marginLeft: 8 }} onClick={() => api<Session>("/auth/switch-org", { method: "POST", body: { org_slug: o.slug } })
+              .then((s) => { setToken(s.access_token); localStorage.removeItem("dbpilot.cluster"); window.location.assign("/app"); })}>Switch to {o.name}</button>))}</p>)}
+        <p>{can(me?.org.role, "ADMIN") ? <>Or register a database under <Link to="/app/settings">Settings</Link>.</> : "An admin can register one under Settings."}</p>
+      </div>
+    );
+  }
   return <>{children(cluster)}</>;
 }
 

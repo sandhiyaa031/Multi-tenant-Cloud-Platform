@@ -45,8 +45,11 @@ test("every console page renders for the demo organization", async ({ page }) =>
     ["Verification", "Verification"], ["Canary Deployments", "Canary Deployments"], ["Experiments", "Experiments"],
     ["Audit History", "Audit History"], ["Settings", "Settings"],
   ];
+  const paths: Record<string, string> = { Tenants: "tenants", Workloads: "workloads", "Query Intelligence": "queries", "Database Health": "health",
+    "Agent Console": "agent", Recommendations: "recommendations", "Digital Twin Lab": "twin", Verification: "verification",
+    "Canary Deployments": "canary", Experiments: "experiments", "Audit History": "audit", Settings: "settings" };
   for (const [link, heading] of pages) {
-    await page.getByRole("link", { name: link, exact: true }).click();
+    await page.goto(`/app/${paths[link]}`);
     await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
     await page.waitForLoadState("networkidle");
     await expect(page.getByText(CRASH), `${link} crashed`).toHaveCount(0);
@@ -57,13 +60,13 @@ test("every console page renders for the demo organization", async ({ page }) =>
   const headers = { Authorization: `Bearer ${token}` };
   const cluster = (await (await page.request.get("/api/v1/clusters", { headers })).json()).find((c: any) => c.primary_host);
   const noise = await (await page.request.get(`/api/v1/clusters/${cluster.id}/canary-noise?minutes=180`, { headers })).json();
-  await page.getByRole("link", { name: "Canary Deployments", exact: true }).click();
+  await page.getByRole("link", { name: "Canary", exact: true }).click();
   const card = page.locator(".card", { hasText: "Canary noise check" });
   if (noise.sequences === 0) await expect(card).toContainText("Not enough quiet telemetry yet");
   else for (const key of Object.keys(noise.keys)) await expect(card.locator("tr", { hasText: key })).toBeVisible();
   await card.screenshot({ path: "test-results/canary-noise.png" });
   // Live telemetry: the four seeded tenants and a drawn latency chart.
-  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await page.getByRole("link", { name: "Dashboard", exact: true }).click();
   await expect(page.locator(".stat", { hasText: "Tenants" }).locator(".value")).toHaveText("4");
   await expect(page.locator(".recharts-line").first()).toBeVisible();
 });
@@ -111,9 +114,9 @@ test("a stored twin verdict is displayed with its pairs, intervals and target", 
   await page.screenshot({ path: "test-results/twin-view.png", fullPage: true });
 
   // The same verdict in the Digital Twin Lab, and prediction beside outcome under Experiments.
-  await page.getByRole("link", { name: "Digital Twin Lab", exact: true }).click();
+  await page.getByRole("link", { name: "Digital Twin", exact: true }).click();
   await expect(page.locator("svg.forest").first()).toBeVisible();
-  await page.getByRole("link", { name: "Experiments", exact: true }).click();
+  await page.goto("/app/experiments");
   await expect(page.getByRole("heading", { name: "Prediction against outcome" })).toBeVisible();
   await page.waitForLoadState("networkidle");
   await expect(page.getByText(CRASH)).toHaveCount(0);

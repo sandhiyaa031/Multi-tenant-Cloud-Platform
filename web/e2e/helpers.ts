@@ -29,7 +29,7 @@ export async function undoEarlierRuns(page: Page) {
 
 // Fills the proposal form from a template and submits; the console then opens the new proposal.
 export async function propose(page: Page, template: string, verification: "full" | "canary_only", rationale: string) {
-  await page.getByRole("link", { name: "Recommendations", exact: true }).click();
+  await page.getByRole("link", { name: "Proposals", exact: true }).click();
   await page.getByRole("button", { name: "Propose an action" }).click();
   await page.getByLabel("Start from").selectOption({ label: template });
   await page.getByLabel("Rationale").fill(rationale);

@@ -20,7 +20,7 @@ test("the LLM proposer runs live from the guided page and its provenance is reco
   const status = await get(page, "/agent/status");
   test.skip(!status.configured, "no LLM provider key is configured on this server");
   try {
-    await page.getByRole("link", { name: "Guided demo", exact: true }).click();
+    await page.getByRole("link", { name: "Open the guided walkthrough" }).click();
     await expect(page.getByText(`LLM provider: ${status.provider}, model ${status.model}`)).toBeVisible();
     // Canary-only so that it ends in minutes; the change, if any, is rolled back below.
     await page.getByLabel("Verification mode").selectOption("canary_only");

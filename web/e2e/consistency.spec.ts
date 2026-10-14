@@ -29,7 +29,7 @@ test("selecting a tenant shows that tenant's queries, as the API ranks them", as
   const cluster = await observed(page);
   const tenants = await get(page, `/tenants?cluster_id=${cluster.id}`);
   const analytic = tenants.find((t: any) => t.db_role === "t_analytic");
-  await page.getByRole("link", { name: "Query Intelligence", exact: true }).click();
+  await page.goto("/app/queries");
   await page.getByLabel("Tenant", { exact: true }).selectOption({ label: analytic.name });
 
   const api = await get(page, `/clusters/${cluster.id}/top-queries?minutes=15&limit=40&tenant_id=${analytic.id}`);
@@ -71,7 +71,7 @@ test("wrong input is refused with the API's own message, and nothing is stored",
   expect((await get(page, `/tenants?cluster_id=${cluster.id}`)).length).toBe(before);
 
   // A proposal that is not JSON, and one that is outside the action space.
-  await page.getByRole("link", { name: "Recommendations", exact: true }).click();
+  await page.getByRole("link", { name: "Proposals", exact: true }).click();
   await page.getByRole("button", { name: "Propose an action" }).click();
   await page.getByLabel("Action").fill("not json");
   await page.getByRole("button", { name: "Submit for verification" }).click();
@@ -83,7 +83,7 @@ test("wrong input is refused with the API's own message, and nothing is stored",
   expect(JSON.stringify(proposals)).not.toContain("DROP TABLE");
 
   // An organization name that is too short is stopped before it is sent; one that is only symbols is stopped by the API.
-  await page.getByRole("navigation").getByRole("link", { name: "Organizations", exact: true }).click();
+  await page.locator("header").getByRole("link", { name: "Organizations", exact: true }).click();
   await page.getByLabel("Organization name").fill("!!!???");
   await page.getByRole("button", { name: "Create organization" }).click();
   await expect(page.getByRole("alert")).toContainText(/letters or digits/);

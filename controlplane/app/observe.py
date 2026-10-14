@@ -154,10 +154,14 @@ class Observer:
         with self._twin() as twin:
             return twin.post("/explain", json={"query": row["query"]}).raise_for_status().json()
 
-    def whatif_index(self, table: str, columns: list[str], tenant_role: str | None = None, minutes: int = 60) -> dict:
-        """Planner cost of the observed queries on `table`, with and without a hypothetical index."""
+    def whatif_index(self, table: str, columns: list[str], tenant_role: str | None = None, minutes: int = 60,
+                     also: list[str] | None = None) -> dict:
+        """Planner cost of the observed queries on `table`, with and without a hypothetical index.
+        `also` names queries to include whatever the window's top 100 holds: a query that led to the
+        question must not be left out because heavier traffic from elsewhere filled the list."""
         action = actions.CreateIndex(table=table, columns=columns, tenant_role=tenant_role)
-        queries = [q["query"] for q in self.top_queries(minutes, None, 100) if f"ch.{table}" in q["query"]]
+        queries = list(dict.fromkeys([*(also or []), *(q["query"] for q in self.top_queries(minutes, None, 100)
+                                                       if f"ch.{table}" in q["query"])]))
         with self._twin() as twin:
             return twin.post("/whatif", json={"action": action.model_dump(), "queries": queries}).raise_for_status().json()
 

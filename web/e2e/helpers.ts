@@ -53,3 +53,28 @@ export async function throughCanaryAndBack(page: Page) {
   await expect(current).toContainText("Rolled back", { timeout: 60_000 });
   await expect(page.getByText(CRASH)).toHaveCount(0);
 }
+
+// ── API access and clean-up shared by the guided-demo tests ───────────────────────
+export async function headers(page: Page) {
+  return { Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem("dbpilot.token"))}` };
+}
+export async function get(page: Page, path: string) { return (await page.request.get(`/api/v1${path}`, { headers: await headers(page) })).json(); }
+export async function post(page: Page, path: string, data: unknown = {}) { return page.request.post(`/api/v1${path}`, { headers: await headers(page), data }); }
+
+// Whatever this test queued or applied is undone, so the next run starts from the same state.
+export async function settle(page: Page, since: number) {
+  await expect(async () => {
+    const cluster = (await get(page, "/clusters")).find((c: any) => c.primary_host);
+    const mine = (await get(page, `/proposals?cluster_id=${cluster.id}&limit=100`)).filter((p: any) => new Date(p.created_at).getTime() >= since - 5000);
+    for (const p of mine) {
+      if (p.state === "APPLIED") await post(page, `/proposals/${p.id}/rollback`, { reason: "e2e cleanup" });
+      if (["AWAITING_APPROVAL", "INCONCLUSIVE"].includes(p.state)) await post(page, `/proposals/${p.id}/reject`, { reason: "e2e cleanup" });
+    }
+    expect(mine.filter((p: any) => ["PROPOSED", "VERIFYING", "APPROVED", "CANARY", "APPLIED", "ROLLBACK_REQUESTED"].includes(p.state))).toHaveLength(0);
+  }).toPass({ timeout: 10 * 60_000, intervals: [5_000] });
+}
+export async function restoreObjective(page: Page) {
+  const tenants = await get(page, "/tenants");
+  const target = tenants.find((t: any) => t.db_role === "t_analytic");
+  if (target) await page.request.put(`/api/v1/tenants/${target.id}/slos`, { headers: await headers(page), data: { query_class: "OLAP", percentile: 95, threshold_ms: 2000 } });
+}

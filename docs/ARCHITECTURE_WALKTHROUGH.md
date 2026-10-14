@@ -43,8 +43,10 @@ percentiles; the twin reads the same files to get the transactions it replays.
 | `web/src/api.ts` | `fetch` wrapper. Keeps the token in `localStorage`, sends it as `Authorization: Bearer`, and on a 401 clears it and returns to sign-in with a notice |
 | `web/src/pages/Public.tsx` | Landing, Login, Signup, Forgot, Reset |
 | `web/src/pages/Observe.tsx` | Overview, Tenants, Workloads, Query Intelligence, Database Health |
-| `web/src/pages/Optimise.tsx` | Agent Console, Recommendations, the proposal page, Digital Twin Lab, Verification, Canary Deployments, Experiments |
-| `web/src/pages/Admin.tsx` | Audit History, Settings (members, invitations, clusters) |
+| `web/src/pages/Optimise.tsx` | Agent Console, Recommendations, the proposal page, Digital Twin Lab, Verification, Canary Deployments, Experiments. Also exports the pieces the guided page reuses: `Steps`, `TwinRun`, `CanaryView`, `DecisionPanel` |
+| `web/src/pages/Demo.tsx` | **Guided demo**: twelve steps that follow one proposal from a tenant's problem to its outcome, reading live data. Rule candidates are previewed and one is queued; the LLM agent button is enabled only if the server has a provider key |
+| `web/src/pages/Admin.tsx` | Audit History, Settings (members, invitations, clusters, **retire cluster**), **Organizations** (list, create, rename, switch, archive) |
+| `web/src/lifecycle.ts` | Pure functions: what each proposal state and each gate verdict is worded as (`lifecycle`, `verdictMeaning`, `rejectedAt`). Tested without a browser in `web/e2e/states.spec.ts` |
 | `web/src/ui.tsx` | Shared pieces: `EffectsPlot` (the interval chart), `Stepper`, `ErrorBoundary` |
 
 The proposal page (`ProposalPage` in `Optimise.tsx`, route `/app/recommendations/:id`) is the centre of the demo. It
@@ -65,6 +67,28 @@ Example: the Overview page asks for latency.
 6. The transaction commits and the identity is gone.
 
 So authorization is enforced twice: in the API, and again by PostgreSQL.
+
+### The same path for an organization
+
+Creating an organization from the console (`Admin.tsx: Organizations`) is an ordinary request, with one difference: it needs no
+organization context to *start*, because it creates one.
+
+1. The browser calls `POST /api/v1/orgs {name}` (`web/src/api.ts`, through nginx's `/api/` proxy).
+2. `controlplane/app/routers/organizations.py: create_organization` verifies the token (a user, not an organization, is what
+   it needs: `get_principal`), turns the name into a slug (`slugify`) and calls `cp.create_organization(user_id, name, slug)`.
+   The user id comes from the verified token, never from the request body.
+3. That `SECURITY DEFINER` function (`controlplane/migrations/008_organizations.sql`) inserts the organization, the caller's
+   ADMIN membership and an audit row in **one transaction**, or none of them. A name whose slug is taken violates the unique
+   constraint and the API answers 409 "an organization with that name already exists".
+4. The API reads the new row back through `cp.my_organizations(user_id)`, so what the browser shows is what the database holds.
+5. The page reloads its list from `GET /orgs` (it keeps no copy), and `auth/me` refreshes the topbar switcher.
+
+Rename (`PATCH /orgs/current`) is an `UPDATE` under the row-level policy that only ADMINs satisfy, followed by an audit call.
+"Remove" (`DELETE /orgs/current`) is `cp.archive_organization()`: the audit log is append-only and references organizations, so
+the row is kept and `has_role()` is false for it from then on, which closes every policy at once (`docs/DATA_MODEL.md`, section 6).
+
+None of this touches a data plane. A cluster is registered afterwards (`POST /clusters`) and a tenant after that (`POST /tenants`);
+both record where an existing PostgreSQL role is.
 
 ## 4. Where telemetry comes from
 
@@ -104,6 +128,10 @@ Three ways, all in `controlplane/app/routers/proposals.py`:
 
 - By hand: `POST /clusters/{id}/proposals` → `create_proposal` → `insert_proposal`, which validates the action with
   `actions.parse_action` and inserts a row in state `PROPOSED`.
+- By the rules, one candidate at a time: `POST /clusters/{id}/diagnose/preview` runs the rule-based proposer and returns what it
+  would propose, queueing nothing; `POST /clusters/{id}/diagnose` with `only_action` queues just the candidate whose action equals
+  the given one. The match is made on the proposer's own output on the server, so an action the rules did not make cannot be
+  queued under their name. (Without `only_action` every candidate is queued, and each is verified in turn.)
 - Rule-based proposer: `POST /clusters/{id}/diagnose` with `source: "rule"` → `_diagnose` → `rules.propose(observer)`
   (`proposers/rules.py`). Its rules are `_spills`, `_missing_indexes`, `_stale_statistics`, `_bursts`. For example
   `_missing_indexes` takes each tenant's expensive `SELECT`s, finds equality filters on unindexed columns, and calls

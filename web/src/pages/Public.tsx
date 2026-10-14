@@ -33,10 +33,11 @@ export function Landing() {
   return (
     <PublicLayout>
       <header className="hero">
-        <h1>Optimise a shared PostgreSQL without hurting a single tenant.</h1>
+        <h1>Test every change to a shared PostgreSQL against every tenant first.</h1>
         <p>
-          DBPilot lets an AI agent propose database optimisations, then proves each one on a real clone of your
-          database, under your real workload, for every tenant, before production is touched.
+          DBPilot lets a rule-based proposer or an LLM agent suggest a database optimisation, then measures it on a real clone of the
+          database, under the real workload, tenant by tenant, before production is touched. It applies a change only when
+          the evidence shows the target tenant benefits and no tenant is harmed; when the evidence cannot show that, it does not apply it.
         </p>
         <div className="loop">{LOOP.map((s) => <span key={s}>{s}</span>)}</div>
         <div className="row">
@@ -65,6 +66,17 @@ export function Landing() {
           <div className="card"><h3>The agent cannot approve itself</h3><p className="secondary">Verification is separate code. A proposal is only data until it passes.</p></div>
           <div className="card"><h3>Every tenant is measured</h3><p className="secondary">Not just the one being helped. A change is rejected when tenant A improves and tenant B is harmed.</p></div>
           <div className="card"><h3>Uncertain is not safe</h3><p className="secondary">A result that cannot be told apart from harm is escalated to a person, never applied automatically.</p></div>
+        </div>
+      </section>
+      <section className="section">
+        <h2>What has and has not been shown</h2>
+        <div className="grid cols-2">
+          <div className="card"><h3>Shown</h3>
+            <p className="secondary">The whole loop runs on a real stack: proposal, static rules, planner check, digital-twin replay, a per-tenant verdict, a human decision, a canary in production and automatic rollback. The canary has undone a harmful change by itself.</p>
+            <p className="secondary">With a slowdown of known size injected into real measurements, judging the whole workload approved a change that slowed a neighbour by 20% in 20 to 43% of cases; judging per tenant approved none.</p></div>
+          <div className="card"><h3>Not shown</h3>
+            <p className="secondary">On the development laptop the twin cannot show a neighbour unharmed within 5%, so its verdicts are inconclusive and nothing is applied without a person. It has not caught a real harmful change, because none was found. It was measured on one uncontrolled machine, and the LLM proposer has been run live only a handful of times.</p>
+            <p className="secondary">An inconclusive verdict is reported as inconclusive, never as an approval.</p></div>
         </div>
       </section>
     </PublicLayout>

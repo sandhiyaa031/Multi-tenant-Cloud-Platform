@@ -5,7 +5,7 @@ in DBPilot, and how to explain it to a professor. Each section says whether the
 part is built and how far it has been verified; where something was written but
 not yet run for real, it says so.
 
-New to the project? Start with the [study guide](STUDY_GUIDE.md) and the
+New to the project? Start with the [complete guide](COMPLETE_GUIDE.md) and the
 [key concepts](KEY_CONCEPTS.md); this guide goes deeper into each technology.
 
 ---

@@ -423,6 +423,8 @@ services:
       DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD}
     volumes:
       - ./web/e2e:/e2e
+      # The pure wording functions (src/lifecycle.ts) are tested directly, without a browser.
+      - ./web/src:/e2e/src:ro
     depends_on:
       - web
 

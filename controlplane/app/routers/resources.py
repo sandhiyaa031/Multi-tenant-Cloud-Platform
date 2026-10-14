@@ -81,15 +81,17 @@ async def create_cluster(body: ClusterIn, principal: Principal = Depends(require
 @router.post("/clusters/{cluster_id}/retire", response_model=ClusterOut)
 async def retire_cluster(cluster_id: UUID, principal: Principal = Depends(require_role("ADMIN"))):
     """Stops DBPilot observing a cluster and marks it RETIRED. The cluster, its tenants, its telemetry and
-    its proposals stay as history; nothing on the data plane is touched. Refused while a change to it is
-    still in flight, because the engine would be left half-way through it."""
+    its proposals stay as history; nothing on the data plane is touched. Refused while a change to it is still in
+    flight (the engine would be left half-way through it) or applied and not rolled back (DBPilot would stop
+    being able to undo it)."""
     async with principal.tx() as conn:
         cur = await conn.execute(
             "SELECT count(*) AS n FROM cp.proposals WHERE cluster_id = %s"
-            " AND state IN ('PROPOSED', 'VERIFYING', 'APPROVED', 'CANARY', 'ROLLBACK_REQUESTED')", (cluster_id,))
+            " AND state IN ('PROPOSED', 'VERIFYING', 'APPROVED', 'CANARY', 'ROLLBACK_REQUESTED', 'APPLIED')", (cluster_id,))
         if (await cur.fetchone())["n"]:
             raise HTTPException(status.HTTP_409_CONFLICT,
-                                "a change to this cluster is still being verified or applied; wait for it to finish")
+                                "a change to this cluster is still being verified or applied, or is live and not yet rolled back; "
+                                "wait for it to finish, or roll it back first")
         cur = await conn.execute(
             "UPDATE cp.clusters SET status = 'RETIRED', primary_host = NULL, primary_port = NULL WHERE id = %s RETURNING *",
             (cluster_id,))

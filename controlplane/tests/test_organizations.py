@@ -171,6 +171,20 @@ def test_a_cluster_with_a_change_in_flight_cannot_be_retired(client, org):
     assert refused.status_code == 409 and "still being verified" in refused.json()["detail"]
 
 
+def test_a_cluster_with_a_live_applied_change_cannot_be_retired_until_it_is_rolled_back(client, org, owner_db):
+    cluster = org.cluster()
+    # The precondition, written directly: an applied change is what the engine would have left behind.
+    owner_db.execute("INSERT INTO cp.proposals (org_id, cluster_id, source, action, state) VALUES (%s, %s, 'manual', %s::jsonb, 'APPLIED')",
+                     (org.id, cluster, '{"type": "no_action", "reason": "applied earlier"}'))
+    owner_db.commit()
+    refused = client.post(f"{API}/clusters/{cluster}/retire", headers=org.admin)
+    assert refused.status_code == 409 and "not yet rolled back" in refused.json()["detail"]
+    owner_db.execute("UPDATE cp.proposals SET state = 'ROLLBACK_REQUESTED' WHERE cluster_id = %s", (cluster,))
+    owner_db.execute("UPDATE cp.proposals SET state = 'ROLLED_BACK' WHERE cluster_id = %s", (cluster,))
+    owner_db.commit()
+    assert client.post(f"{API}/clusters/{cluster}/retire", headers=org.admin).status_code == 200
+
+
 def test_retiring_needs_an_admin_and_another_organizations_cluster_is_not_found(client, org, other_org, outbox):
     cluster = org.cluster()
     assert client.post(f"{API}/clusters/{cluster}/retire", headers=org.member("OPERATOR", outbox)).status_code == 403

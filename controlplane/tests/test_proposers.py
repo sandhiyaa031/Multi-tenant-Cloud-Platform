@@ -37,8 +37,9 @@ class FakeObserver:
     def explain(self, queryid): return {"explained": True, "plan": "Seq Scan on order_line_t_analytic"}
     def table_profile(self, table): return {"table": table, **self.data["profile"]}
 
-    def whatif_index(self, table, columns, tenant_role=None, minutes=60):
+    def whatif_index(self, table, columns, tenant_role=None, minutes=60, also=None):
         self.calls.append(("whatif", table, tuple(columns), tenant_role))
+        self.also = also
         return self.data["whatif"]
 
 
@@ -76,6 +77,14 @@ def test_rules_propose_an_index_only_when_the_planner_agrees():
 
     useless = {"queries": [{"query": ITEM_LOOKUP, "ratio": 0.97}], "estimated_index_bytes": 10_000_000}
     assert rules.propose(FakeObserver(top_queries=[query("t_analytic", ITEM_LOOKUP, 4000)], whatif=useless)) == []
+
+
+def test_rules_hand_the_triggering_query_to_the_planner_check():
+    """Heavier traffic from other tenants can fill the window's top 100; the query that raised the question must still be explained."""
+    helpful = {"queries": [{"query": ITEM_LOOKUP, "ratio": 0.02}], "estimated_index_bytes": 10_000_000}
+    obs = FakeObserver(top_queries=[query("t_analytic", ITEM_LOOKUP, 5000)], whatif=helpful)
+    rules.propose(obs)
+    assert obs.also == [ITEM_LOOKUP]
 
 
 def test_rules_ignore_columns_the_primary_key_already_serves_and_non_selects():
@@ -331,6 +340,69 @@ def test_agent_proposal_for_a_tenant_not_on_the_cluster_is_refused(client, org, 
     use_model(monkeypatch, FakeModel(reply(tool("propose_action", "a", rationale="x", action=action))))
     assert diagnose(client, org, diagnosable).status_code == 422
     assert proposal_count(client, org, diagnosable) == 0
+
+
+def _canned_rules(monkeypatch):
+    from app.proposers.rules import Proposal
+    found = [Proposal({"type": "create_index", "table": "order_line", "columns": ["ol_i_id"], "tenant_role": "t_analytic"},
+                      "t_analytic scans its partition for item lookups.", {"rule": "missing_index", "planner_ratio": 0.01}),
+             Proposal({"type": "analyze", "table": "orders", "tenant_role": "t_analytic"}, "statistics are stale.", {"rule": "stale_statistics"})]
+    monkeypatch.setattr(rules, "propose", lambda obs, minutes=15: found)
+    return found
+
+
+def test_a_preview_shows_what_the_rules_find_and_stores_nothing(client, org, diagnosable, monkeypatch):
+    _canned_rules(monkeypatch)
+    r = client.post(f"/api/v1/clusters/{diagnosable}/diagnose/preview", headers=org.admin)
+    assert r.status_code == 200
+    assert [c["action"]["type"] for c in r.json()] == ["create_index", "analyze"]
+    assert r.json()[0]["evidence"]["planner_ratio"] == 0.01 and "partition" in r.json()[0]["rationale"]
+    assert proposal_count(client, org, diagnosable) == 0
+
+
+def test_only_the_chosen_candidate_is_queued_and_it_is_still_the_proposers_own(client, org, diagnosable, monkeypatch):
+    _canned_rules(monkeypatch)
+    chosen = {"type": "create_index", "table": "order_line", "columns": ["ol_i_id"], "tenant_role": "t_analytic"}
+    r = client.post(f"/api/v1/clusters/{diagnosable}/diagnose", headers=org.admin,
+                    json={"source": "rule", "only_action": chosen, "verification": "canary_only"})
+    assert r.status_code == 201 and len(r.json()) == 1
+    stored = r.json()[0]
+    assert stored["source"] == "rule" and stored["verification"] == "canary_only" and stored["evidence"]["rule"] == "missing_index"
+    assert proposal_count(client, org, diagnosable) == 1
+
+
+def test_an_action_the_proposer_did_not_make_cannot_be_queued_under_its_name(client, org, diagnosable, monkeypatch):
+    _canned_rules(monkeypatch)
+    smuggled = {"type": "role_setting", "tenant_role": "t_analytic", "name": "work_mem", "value": "65536"}
+    r = client.post(f"/api/v1/clusters/{diagnosable}/diagnose", headers=org.admin, json={"source": "rule", "only_action": smuggled})
+    assert r.status_code == 201 and r.json() == []
+    assert proposal_count(client, org, diagnosable) == 0
+    bad = client.post(f"/api/v1/clusters/{diagnosable}/diagnose", headers=org.admin,
+                      json={"source": "rule", "only_action": {"type": "run_sql", "sql": "DROP TABLE x"}})
+    assert bad.status_code == 422 and proposal_count(client, org, diagnosable) == 0
+
+
+def test_a_viewer_cannot_preview_or_queue(client, org, diagnosable, outbox, monkeypatch):
+    _canned_rules(monkeypatch)
+    viewer = org.member("VIEWER", outbox)
+    assert client.post(f"/api/v1/clusters/{diagnosable}/diagnose/preview", headers=viewer).status_code == 403
+    assert client.post(f"/api/v1/clusters/{diagnosable}/diagnose", headers=viewer, json={"source": "rule"}).status_code == 403
+
+
+def test_agent_status_reports_the_provider_and_never_a_key(client, org, monkeypatch):
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GROQ_API_KEY", "GEMINI_API_KEY", "GROQ_MODEL", "GEMINI_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    status = lambda: client.get("/api/v1/agent/status", headers=org.admin).json()    # noqa: E731
+    assert status() == {"configured": False, "provider": None, "model": None, "rule_based": True}
+    monkeypatch.setenv("GEMINI_API_KEY", "a-secret-value")
+    assert status() == {"configured": True, "provider": "gemini", "model": "gemini-3.8-flash", "rule_based": True}
+    monkeypatch.setenv("GROQ_API_KEY", "another-secret")                              # Groq is asked before Gemini
+    monkeypatch.setenv("GROQ_MODEL", "some/model")
+    assert status() == {"configured": True, "provider": "groq", "model": "some/model", "rule_based": True}
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "third-secret")                           # and Anthropic before both
+    assert status()["provider"] == "anthropic"
+    assert "secret" not in str(status())
+    assert client.get("/api/v1/agent/status").status_code == 401
 
 
 def test_diagnose_without_an_api_key_says_so_and_stores_nothing(client, org, diagnosable, monkeypatch):

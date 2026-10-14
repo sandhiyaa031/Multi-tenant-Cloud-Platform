@@ -6,6 +6,7 @@ import { Architecture, Forgot, Landing, Login, Product, Reset, Signup } from "./
 import { Health, Overview, Queries, Tenants, Workloads } from "./pages/Observe";
 import { AgentConsole, Canaries, Experiments, ProposalPage, Recommendations, TwinLab, Verification } from "./pages/Optimise";
 import { Audit, Organizations, Settings } from "./pages/Admin";
+import { Demo } from "./pages/Demo";
 
 interface Me { user_id: string; email: string; full_name: string; org: Org; orgs: Org[] }
 interface AuthCtx { me: Me | null; ready: boolean; signIn: (s: Session) => void; signOut: () => void; refresh: () => void }
@@ -38,6 +39,7 @@ function AuthProvider({ children }: { children: ReactNode }) {
 }
 
 const NAV: [string, [string, string][]][] = [
+  ["Start here", [["demo", "Guided demo"]]],
   ["Observe", [["overview", "Overview"], ["tenants", "Tenants"], ["workloads", "Workloads"], ["queries", "Query Intelligence"], ["health", "Database Health"]]],
   ["Optimise", [["agent", "Agent Console"], ["recommendations", "Recommendations"], ["twin", "Digital Twin Lab"], ["verification", "Verification"], ["canary", "Canary Deployments"]]],
   ["Evidence", [["experiments", "Experiments"], ["audit", "Audit History"]]],
@@ -150,6 +152,7 @@ export default function App() {
         <Route path="/reset-password" element={<Reset />} />
         <Route path="/app" element={<Shell />}>
           <Route index element={<Navigate to="overview" replace />} />
+          <Route path="demo" element={<Demo />} />
           <Route path="overview" element={<Overview />} />
           <Route path="tenants" element={<Tenants />} />
           <Route path="workloads" element={<Workloads />} />

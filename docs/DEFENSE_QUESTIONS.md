@@ -205,3 +205,39 @@ and the Kubernetes manifests in `deploy/k3s/`, which are written and have never 
 **35. How long does a verdict take, and is that acceptable?**
 About 17 minutes for eight pairs on the laptop, against about 75 seconds for a canary alone. For an index that lives for
 months that is acceptable; for the gate to be worth it, it has to reach a decision in that time, which here it does not.
+
+## The console and the organization flow
+
+**36. What is the difference between an organization and a tenant?**
+An organization is DBPilot's own customer: a row in `cp.organizations` with members, roles and clusters. A tenant is a
+database role with a warehouse range inside one cluster's data plane. The chain is organization, cluster, tenant.
+Creating an organization creates no cluster and no PostgreSQL role; DBPilot never runs `CREATE ROLE` or `CREATE DATABASE`
+on a data plane. The Organizations page says so, and `docs/DATA_MODEL.md` has the schema.
+
+**37. Why can an organization be archived but not deleted?**
+The audit log references the organization with `ON DELETE RESTRICT`, and the audit log is append-only by trigger, so a
+delete would either destroy history or be refused. Archiving closes the organization (its role check returns false, so
+every policy denies it) and keeps the history. It is refused while the organization has live clusters, and for a
+person's only organization.
+
+**38. Is the frontend real, or does it show canned data?**
+Every page reads the API, and the API reads the control-plane database under row-level security. The Guided demo reads
+only live endpoints. The one stored artifact it can show, a twin verdict from an earlier run, is labelled as stored and
+dated. A browser test checks that displayed values equal the API's, and another creates an organization through the API and
+finds it in the browser, and the reverse.
+
+**39. Can the system approve a change it should not?**
+Not through the gate: a harm needs to show in both arm orders, and an inconclusive result is never applied
+automatically. On the development laptop the twin's verdicts are inconclusive, so a person decides, and the canary can
+still undo a bad change. A real twin APPROVE has not occurred; the interface wording for it is tested on the verdict
+function, not on an invented result.
+
+**40. What if the LLM provider is down during the review?**
+The rule-based proposer needs no key and is a real proposer. The interface reports the provider's error as an error. On
+2026-10-14 the configured provider returned HTTP 503, so the live LLM step could not be repeated that day; earlier live
+runs are recorded under `docs/evidence/agent/`. Nothing is simulated to cover for it.
+
+**41. Why is there no hosted deployment?**
+A static host would serve a console with nothing behind it, and the real system is ten services that copy PostgreSQL data
+directories, which free application hosts do not provide. Running locally, bound to `127.0.0.1`, is what was tested;
+`docs/DEPLOYMENT.md` lists the options, none of which was created.

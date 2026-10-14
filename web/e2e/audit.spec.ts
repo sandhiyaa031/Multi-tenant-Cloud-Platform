@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
 import { CRASH, signIn } from "./helpers";
 import { mkdirSync, writeFileSync } from "node:fs";
 
-const PAGES = ["overview", "tenants", "workloads", "queries", "health", "agent", "recommendations", "twin", "verification",
+const PAGES = ["demo", "overview", "tenants", "workloads", "queries", "health", "agent", "recommendations", "twin", "verification",
   "canary", "experiments", "audit", "organizations", "settings"];
 
 test("every console page, with live data", async ({ page }) => {

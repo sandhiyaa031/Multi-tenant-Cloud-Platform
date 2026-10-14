@@ -100,3 +100,21 @@ Thirty-second windows with another program using a full core, so these are obser
   the server version. It has not been reproduced outside this stack or bisected, which should come first.
 - *What happens if the noise floor comes out at 5-12% again?* Then it is reported as that, and every Phase 2 scenario
   whose expected harm is smaller is listed as not showable on this machine before Phase 2 starts.
+
+## Review preparation (2026-10-14)
+
+Goal: make the console, the API and the databases demonstrable end to end for the DBMS review, without new research.
+
+- **Organizations** are now a managed resource (create, list, rename, archive), distinct from data-plane tenants. Archive,
+  not delete, because the audit log references organizations and is immutable. Cluster retire added, refused while a
+  change is in flight or applied.
+- **Guided demo** page walks the twelve steps on live endpoints only. Gate thresholds and algorithm were not touched.
+- **Bug found by the full test run:** the missing-index rule asked the planner about the window's top 100 queries; after
+  heavy test traffic the triggering query was pushed out, so the rule proposed nothing. The rule now passes its own query.
+  Regression test added.
+- **Results (this laptop, 2026-10-14):** control plane 234 passed; data plane 36; twin 54; workload 24 (two row-count tests
+  fail while demo traffic is running and pass with it paused); browser: demo, org, consistency, states, guided, audit,
+  rollback and Route A pass; the twin browser spec failed once after 22 s (cause not established) and completed the full
+  twin, decision, apply and rollback cycle on rerun.
+- **Not done:** live LLM step (Gemini returned 503 that day; earlier live runs are in `docs/evidence/agent/`); no real
+  twin APPROVE exists, so APPROVE wording is tested on the verdict function only; no hosted deployment was created.

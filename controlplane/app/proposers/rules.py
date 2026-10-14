@@ -64,7 +64,7 @@ def _missing_indexes(obs: Observer, queries: list[dict]) -> list[Proposal]:
                     continue
                 tried.add((table, column, q["tenant_role"]))
                 role = q["tenant_role"] if table in actions.PARTITIONED else None
-                result = obs.whatif_index(table, [column], role)
+                result = obs.whatif_index(table, [column], role, also=[text])
                 best = min((r["ratio"] for r in result.get("queries", [])), default=1.0)
                 if best <= INDEX_MIN_GAIN:
                     out.append(Proposal(

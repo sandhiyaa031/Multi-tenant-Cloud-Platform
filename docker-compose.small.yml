@@ -1,0 +1,29 @@
+# For a host with fewer cores than the development laptop. The default compose file pins every
+# service to named cores 0-19 (so that the twin's clone does not compete with the primary); on a
+# host that does not have those cores Docker refuses to start the container. This override drops
+# the pinning and lets the host's scheduler share the cores.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.small.yml up -d
+#
+# What it costs: the services then compete for CPU, so latencies are higher and noisier and the
+# digital twin's measurements are less steady. It is for showing the system working on a small
+# machine, never for measuring it. Memory limits are those of .env.example (about 6 GB in all).
+services:
+  dp-primary:
+    cpuset: !reset null
+  dp-replica:
+    cpuset: !reset null
+  pgbouncer:
+    cpuset: !reset null
+  twin:
+    cpuset: !reset null
+    environment:
+      TWIN_INSTANCE_CPUS: ""
+  workload:
+    cpuset: !reset null
+  demo-load:
+    cpuset: !reset null
+  evaluation:
+    cpuset: !reset null
+  twin-test:
+    cpuset: !reset null

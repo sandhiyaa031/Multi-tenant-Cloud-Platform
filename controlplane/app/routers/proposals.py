@@ -98,6 +98,14 @@ async def insert_proposal(conn, principal: Principal, cluster_id: UUID, body: Pr
     return await cur.fetchone()
 
 
+@router.get("/agent/status")
+async def agent_status(principal: Principal = Depends(require_role("VIEWER"))):
+    """Whether the LLM proposer can run on this deployment, and on which model. The rule-based proposer
+    needs nothing and is always available."""
+    found = llm_provider()
+    return {"configured": found is not None, **(found or {"provider": None, "model": None}), "rule_based": True}
+
+
 @router.get("/actions/schema")
 async def action_schema(principal: Principal = Depends(require_role("VIEWER"))):
     """The complete action space: what a proposer may express, and nothing else."""
@@ -119,6 +127,24 @@ class DiagnoseIn(BaseModel):
     gate_mode: Literal["per_tenant", "aggregate"] = "per_tenant"
     verification: Literal["full", "canary_only", "none"] = "full"
     auto_approve: bool = False
+    # Queue only the candidate whose action equals this one. The proposer is run on the server and the
+    # match is made on its own output, so nothing can be queued under a proposer's name that the proposer
+    # did not produce.
+    only_action: dict[str, Any] | None = None
+
+
+def llm_provider() -> dict | None:
+    """Which model provider a diagnosis with source "agent" would use, from the server's environment.
+    The one place this is decided: _diagnose and GET /agent/status both ask it. Never returns a key."""
+    from app.proposers.groq_client import GeminiClient, GroqClient
+    env = os.environ
+    if env.get("ANTHROPIC_API_KEY") or env.get("ANTHROPIC_AUTH_TOKEN"):
+        return {"provider": "anthropic", "model": env.get("AGENT_MODEL", "claude-opus-5-5")}
+    if env.get("GROQ_API_KEY"):
+        return {"provider": "groq", "model": env.get("GROQ_MODEL") or GroqClient.default_model}
+    if env.get("GEMINI_API_KEY"):
+        return {"provider": "gemini", "model": env.get("GEMINI_MODEL") or GeminiClient.default_model}
+    return None
 
 
 def _log_partial_run(exc: Exception) -> None:
@@ -170,11 +196,25 @@ def _diagnose(user_id: UUID, org_id: UUID, cluster_id: UUID, body: DiagnoseIn) -
         conn.close()
 
 
+@router.post("/clusters/{cluster_id}/diagnose/preview")
+async def diagnose_preview(cluster_id: UUID, principal: Principal = Depends(require_role("OPERATOR"))):
+    """What the rule-based proposer would propose right now, without queueing anything. Every candidate that
+    is queued is verified one after another, and a twin verdict takes minutes, so a person chooses which."""
+    found = await run_in_threadpool(_diagnose, principal.user_id, principal.org_id, cluster_id, DiagnoseIn(source="rule"))
+    return [{"action": actions.parse_action(p.action).model_dump(), "rationale": p.rationale, "evidence": p.evidence} for p in found]
+
+
 @router.post("/clusters/{cluster_id}/diagnose", response_model=list[ProposalOut], status_code=status.HTTP_201_CREATED)
 async def diagnose(cluster_id: UUID, body: DiagnoseIn, principal: Principal = Depends(require_role("OPERATOR"))):
     """OBSERVE -> DIAGNOSE -> PLAN: asks the rule-based proposer or the LLM agent for proposals
-    and queues whatever it returns for verification."""
+    and queues whatever it returns for verification (or just the one named by `only_action`)."""
     found = await run_in_threadpool(_diagnose, principal.user_id, principal.org_id, cluster_id, body)
+    if body.only_action is not None:
+        try:
+            wanted = actions.parse_action(body.only_action).model_dump()
+        except ValidationError as exc:
+            raise HTTPException(422, f"not a valid action: {exc.errors()[0]['msg']}")
+        found = [p for p in found if actions.parse_action(p.action).model_dump() == wanted]
     created = []
     async with principal.tx() as conn:
         for p in found:

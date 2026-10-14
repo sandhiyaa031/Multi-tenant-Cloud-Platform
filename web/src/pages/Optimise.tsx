@@ -2,10 +2,12 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, can, describeAction, fmt, useApi, type Cluster, type Proposal, type ProposalDetail } from "../api";
 import { NeedCluster, useAuth, useCluster } from "../App";
-import { Badge, Card, EffectsPlot, KeyValue, Load, PageHead, Stat, Stepper, type Tone } from "../ui";
+import { Badge, Card, EffectsPlot, KeyValue, Load, PageHead, Stat, Stepper } from "../ui";
+import { lifecycle, STAGES } from "../lifecycle";
+export { lifecycle, STAGES };
 
 const POLL = 8000;
-const IN_FLIGHT = ["PROPOSED", "VERIFYING", "APPROVED", "CANARY", "ROLLBACK_REQUESTED"];
+export const IN_FLIGHT = ["PROPOSED", "VERIFYING", "APPROVED", "CANARY", "ROLLBACK_REQUESTED"];
 
 function ProposalTable({ rows, empty }: { rows: Proposal[]; empty: string }) {
   const navigate = useNavigate();
@@ -62,7 +64,7 @@ function AgentFor({ cluster }: { cluster: Cluster }) {
             <div className="row">
               <button className="primary" disabled={busy !== null} onClick={() => run("agent")}>{busy === "agent" ? "Agent is investigating…" : "Run LLM agent"}</button>
               <button disabled={busy !== null} onClick={() => run("rule")}>{busy === "rule" ? "Evaluating rules…" : "Run rule-based proposer"}</button>
-              <span className="muted">The agent needs a model API key configured on the server. It usually takes under a minute; on a rate-limited account it can take several.</span>
+              <span className="muted">The rule-based proposer queues every candidate it finds for verification; to preview candidates first, use the <Link to="/app/demo">Guided demo</Link>. The agent needs a model API key configured on the server. It usually takes under a minute; on a rate-limited account it can take several.</span>
             </div>
           </>
         )}
@@ -183,41 +185,6 @@ function ProposeForm({ cluster }: { cluster: Cluster }) {
   );
 }
 
-// Where a proposal stands, what that means, and what happens next, in words a visitor can follow.
-const STAGES = ["Proposed", "Verification", "Decision", "Canary", "In production"];
-function lifecycle(d: ProposalDetail): { at: number; tone: Tone; label?: string; meaning: string; next: string } {
-  const inCanary = d.state_reason.startsWith("T3");
-  const inVerification = /^T[012]/.test(d.state_reason);
-  switch (d.state) {
-    case "PROPOSED": return { at: 0, tone: "info", meaning: "Queued. A proposal is only data: nothing has been run or changed.",
-      next: "The engine takes proposals one at a time and starts with the cheapest checks." };
-    case "VERIFYING": return { at: 1, tone: "info", label: "Verifying", meaning: "Being checked: static rules, then the planner, then replays on the digital twin.",
-      next: "A twin verdict rests on several replay pairs of about two minutes each, so this takes several minutes." };
-    case "ADVISORY": return { at: 1, tone: "", label: "Advisory", meaning: "This kind of action cannot be executed or measured automatically.",
-      next: "It is advice for a person; DBPilot will not apply it." };
-    case "AWAITING_APPROVAL": return { at: 2, tone: "warning", label: "Awaiting approval", meaning: "Verification passed: the target was shown to benefit and no tenant was shown or suspected to be harmed.",
-      next: "An operator approves it for a canary in production, or rejects it." };
-    case "INCONCLUSIVE": return { at: 2, tone: "warning", label: "Inconclusive", meaning: "Verification could neither show the change safe nor show it harmful, so it is treated as not safe and is not applied.",
-      next: "An admin may override and send it to a canary; an operator may reject it." };
-    case "REJECTED": return inVerification
-      ? { at: 1, tone: "serious", label: "Rejected in verification", meaning: "A verification tier refused the change. Production was never touched.", next: "Nothing further happens." }
-      : { at: 2, tone: "serious", label: "Rejected", meaning: "A member rejected the change. Production was never touched.", next: "Nothing further happens." };
-    case "APPROVED": return { at: 3, tone: "info", label: "Queued for canary", meaning: "Cleared to go to production under watch.",
-      next: "The engine applies it and starts the canary; one change is in canary per cluster at a time." };
-    case "CANARY": return { at: 3, tone: "info", label: "Canary running", meaning: "The change is live in production and each tenant's latency is being compared with its baseline.",
-      next: "If a tenant breaches its contract in two of three windows, or telemetry is lost, the change is undone automatically. Otherwise it is kept." };
-    case "APPLIED": return { at: 4, tone: "good", label: "Applied", meaning: d.verification === "none" ? "The change was applied and observed without enforcement." : "The canary held for every tenant and the change was kept.",
-      next: "It stays in production until an operator rolls it back with the stored inverse." };
-    case "ROLLBACK_REQUESTED": return { at: 4, tone: "warning", label: "Rolling back", meaning: "A member asked for the change to be undone.", next: "The engine runs the stored inverse." };
-    case "ROLLED_BACK": return inCanary
-      ? { at: 3, tone: "serious", label: "Rolled back by the canary", meaning: "The canary undid the change automatically.", next: "Production is back to how it was before the change." }
-      : { at: 4, tone: "serious", label: "Rolled back", meaning: "The change was undone with its stored inverse.", next: "Production is back to how it was before the change." };
-    case "FAILED": return { at: inCanary ? 3 : 1, tone: "critical", label: "Failed", meaning: "The machinery failed, not the change: see the reason below.",
-      next: "Nothing is left applied unless the reason says a rollback failed." };
-    default: return { at: 0, tone: "", meaning: "", next: "" };
-  }
-}
-
 // Everything recorded about one proposal, as a file a reviewer can keep: the action, each
 // verification step, the twin's measurements and the canary's observations.
 function downloadEvidence(d: ProposalDetail) {
@@ -229,18 +196,37 @@ function downloadEvidence(d: ProposalDetail) {
   URL.revokeObjectURL(url);
 }
 
-export function ProposalPage() {
-  const { id } = useParams();
+// The human decision on a proposal, with the reason that goes to the audit log. Renders nothing when
+// this member has nothing to decide: the buttons shown are the ones the API would accept.
+export function DecisionPanel({ d, onDone }: { d: ProposalDetail; onDone: () => void }) {
   const { me } = useAuth();
-  const p = useApi<ProposalDetail>(`/proposals/${id}`, 5000);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const decide = (verb: string) => api(`/proposals/${id}/${verb}`, { method: "POST", body: { reason } }).then(p.reload).catch((e: Error) => setError(e.message));
+  const role = me?.org.role;
+  const canApprove = (d.state === "AWAITING_APPROVAL" && can(role, "OPERATOR")) || (d.state === "INCONCLUSIVE" && can(role, "ADMIN"));
+  const canReject = ["AWAITING_APPROVAL", "INCONCLUSIVE"].includes(d.state) && can(role, "OPERATOR");
+  const canRollBack = d.state === "APPLIED" && can(role, "OPERATOR");
+  const decide = (verb: string) => api(`/proposals/${d.id}/${verb}`, { method: "POST", body: { reason } })
+    .then(() => { setReason(""); setError(null); onDone(); }).catch((e: Error) => setError(e.message));
+  if (!(canApprove || canReject || canRollBack)) return null;
+  return (
+    <>
+      <div className="row">
+        <input placeholder="Reason (recorded in the audit log)" value={reason} onChange={(e) => setReason(e.target.value)} style={{ flex: 1, minWidth: 260 }} />
+        {canApprove && <button className="primary" onClick={() => decide("approve")}>{d.state === "INCONCLUSIVE" ? "Override and approve" : "Approve for canary"}</button>}
+        {canReject && <button className="danger" onClick={() => decide("reject")}>Reject</button>}
+        {canRollBack && <button className="danger" onClick={() => decide("rollback")}>Roll back</button>}
+      </div>
+      {error && <p className="error" style={{ marginTop: 10 }}>{error}</p>}
+    </>
+  );
+}
+
+export function ProposalPage() {
+  const { id } = useParams();
+  const p = useApi<ProposalDetail>(`/proposals/${id}`, 5000);
   return (
     <Load of={p}>{(d) => {
-      const role = me?.org.role;
-      const canApprove = (d.state === "AWAITING_APPROVAL" && can(role, "OPERATOR")) || (d.state === "INCONCLUSIVE" && can(role, "ADMIN"));
-      const canReject = ["AWAITING_APPROVAL", "INCONCLUSIVE"].includes(d.state) && can(role, "OPERATOR");
       const twin = d.twin_runs.at(-1);
       return (
         <div className="stack">
@@ -256,15 +242,7 @@ export function ProposalPage() {
             ); })()}
             {d.state_reason && <p className="secondary"><span className="muted">Reason recorded: </span>{d.state_reason}</p>}
             {IN_FLIGHT.includes(d.state) && <p className="muted">This page refreshes by itself every 5 seconds.</p>}
-            {(canApprove || canReject || (d.state === "APPLIED" && can(role, "OPERATOR"))) && (
-              <div className="row">
-                <input placeholder="Reason (recorded in the audit log)" value={reason} onChange={(e) => setReason(e.target.value)} style={{ flex: 1, minWidth: 260 }} />
-                {canApprove && <button className="primary" onClick={() => decide("approve")}>{d.state === "INCONCLUSIVE" ? "Override and approve" : "Approve for canary"}</button>}
-                {canReject && <button className="danger" onClick={() => decide("reject")}>Reject</button>}
-                {d.state === "APPLIED" && <button className="danger" onClick={() => decide("rollback")}>Roll back</button>}
-              </div>
-            )}
-            {error && <p className="error" style={{ marginTop: 10 }}>{error}</p>}
+            <DecisionPanel d={d} onDone={p.reload} />
           </Card>
           <div className="grid cols-2">
             <Card title="Action" sub="the typed action; the executor compiles it to SQL"><pre className="trace-result" style={{ maxHeight: 260 }}>{JSON.stringify(d.action, null, 2)}</pre></Card>
@@ -284,7 +262,7 @@ export function ProposalPage() {
 }
 
 const TIER_NAME: Record<string, string> = { T0: "Static rules", T1: "Planner what-if", T2: "Digital twin", T3: "Canary" };
-function Steps({ steps }: { steps: ProposalDetail["steps"] }) {
+export function Steps({ steps }: { steps: ProposalDetail["steps"] }) {
   if (steps.length === 0) return <div className="empty">Verification has not started yet.</div>;
   const tone = (d: string) => (d === "APPROVE" ? "good" : d === "REJECT" ? "critical" : d === "INCONCLUSIVE" ? "warning" : "");
   return (
@@ -302,7 +280,7 @@ function Steps({ steps }: { steps: ProposalDetail["steps"] }) {
 // Values the pair-based gate can produce with two or three disagreeing pairs span many orders of magnitude.
 const bounded = (v: number) => (v >= 100 ? ">100" : v < 0.01 ? "<0.01" : v.toFixed(2));
 
-function TwinRun({ run, target }: { run: any; target?: string | null }) {
+export function TwinRun({ run, target }: { run: any; target?: string | null }) {
   const v = run.verdict;
   const pairs = v.looks ?? run.repetitions ?? 1;
   // Which arm ran first in each pair. Verdicts stored before this was recorded do not have it.
@@ -370,7 +348,7 @@ function TwinRun({ run, target }: { run: any; target?: string | null }) {
   );
 }
 
-function CanaryView({ canary }: { canary: any }) {
+export function CanaryView({ canary }: { canary: any }) {
   const keys = Object.keys(canary.contract).sort();
   const staged = canary.observations.some((o: any) => (o.stage ?? 1) > 1);
   const guards = canary.observations.flatMap((o: any, i: number) => (o.breaches ?? []).filter((b: string) => !b.includes("/")).map((b: string) => `Window ${i + 1}: ${b}`));

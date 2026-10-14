@@ -239,7 +239,7 @@ function QueriesFor({ cluster }: { cluster: Cluster }) {
     <div className="stack">
       <PageHead title="Query Intelligence" action={
         <div className="row">
-          <select value={tenant} onChange={(e) => setTenant(e.target.value)}><option value="">All tenants</option>{tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
+          <select aria-label="Tenant" value={tenant} onChange={(e) => setTenant(e.target.value)}><option value="">All tenants</option>{tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
           <Segmented value={minutes} options={RANGES} onChange={setMinutes} />
         </div>}>
         The statements that cost the most database time, attributed to the tenant that ran them. Literals are replaced by placeholders; no row data is shown.

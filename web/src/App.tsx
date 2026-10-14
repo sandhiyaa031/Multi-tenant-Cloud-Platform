@@ -5,7 +5,7 @@ import { Badge, ErrorBoundary, tenantColors } from "./ui";
 import { Architecture, Forgot, Landing, Login, Product, Reset, Signup } from "./pages/Public";
 import { Health, Overview, Queries, Tenants, Workloads } from "./pages/Observe";
 import { AgentConsole, Canaries, Experiments, ProposalPage, Recommendations, TwinLab, Verification } from "./pages/Optimise";
-import { Audit, Settings } from "./pages/Admin";
+import { Audit, Organizations, Settings } from "./pages/Admin";
 
 interface Me { user_id: string; email: string; full_name: string; org: Org; orgs: Org[] }
 interface AuthCtx { me: Me | null; ready: boolean; signIn: (s: Session) => void; signOut: () => void; refresh: () => void }
@@ -41,7 +41,7 @@ const NAV: [string, [string, string][]][] = [
   ["Observe", [["overview", "Overview"], ["tenants", "Tenants"], ["workloads", "Workloads"], ["queries", "Query Intelligence"], ["health", "Database Health"]]],
   ["Optimise", [["agent", "Agent Console"], ["recommendations", "Recommendations"], ["twin", "Digital Twin Lab"], ["verification", "Verification"], ["canary", "Canary Deployments"]]],
   ["Evidence", [["experiments", "Experiments"], ["audit", "Audit History"]]],
-  ["Organization", [["settings", "Settings"]]],
+  ["Organization", [["organizations", "Organizations"], ["settings", "Settings"]]],
 ];
 
 // Whether the collector is still writing snapshots of this cluster. It records the instance
@@ -64,7 +64,8 @@ function Shell() {
   const location = useLocation();
   const clusters = useApi<Cluster[]>(me ? "/clusters" : null);
   const [selected, setSelected] = useState<string | null>(localStorage.getItem("dbpilot.cluster"));
-  const list = clusters.data ?? [];
+  // A retired cluster is history: it stays in Settings but is not offered as the cluster to look at.
+  const list = (clusters.data ?? []).filter((c) => c.status !== "RETIRED");
   // Prefer a cluster the collector can reach; fall back to the first.
   const cluster = list.find((c) => c.id === selected) ?? list.find((c) => c.primary_host) ?? list[0] ?? null;
   const tenants = useApi<Tenant[]>(cluster ? `/tenants?cluster_id=${cluster.id}` : null);
@@ -162,6 +163,7 @@ export default function App() {
           <Route path="canary" element={<Canaries />} />
           <Route path="experiments" element={<Experiments />} />
           <Route path="audit" element={<Audit />} />
+          <Route path="organizations" element={<Organizations />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<div className="empty">There is no such page. <Link to="/app/overview">Go to the overview</Link>.</div>} />
         </Route>

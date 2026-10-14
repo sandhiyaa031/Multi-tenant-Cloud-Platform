@@ -221,7 +221,8 @@ async def get_proposal(proposal_id: UUID, principal: Principal = Depends(require
             " started_at, finished_at FROM cp.canaries WHERE proposal_id = %s", (proposal_id,))
         canary = await cur.fetchone()
     # A reading aid, computed from the stored verdict: how many pairs each tenant would have needed.
-    twin_runs = [{**run, "planning": twin_planning(run["verdict"])} for run in twin_runs]
+    # CPU-bound arithmetic: off the event loop, so it cannot stall other requests while it runs.
+    twin_runs = [{**run, "planning": await run_in_threadpool(twin_planning, run["verdict"])} for run in twin_runs]
     return {**proposal, "steps": steps, "twin_runs": twin_runs, "canary": canary}
 
 

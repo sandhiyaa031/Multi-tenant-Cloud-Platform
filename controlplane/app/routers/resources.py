@@ -78,6 +78,27 @@ async def create_cluster(body: ClusterIn, principal: Principal = Depends(require
         return await cur.fetchone()
 
 
+@router.post("/clusters/{cluster_id}/retire", response_model=ClusterOut)
+async def retire_cluster(cluster_id: UUID, principal: Principal = Depends(require_role("ADMIN"))):
+    """Stops DBPilot observing a cluster and marks it RETIRED. The cluster, its tenants, its telemetry and
+    its proposals stay as history; nothing on the data plane is touched. Refused while a change to it is
+    still in flight, because the engine would be left half-way through it."""
+    async with principal.tx() as conn:
+        cur = await conn.execute(
+            "SELECT count(*) AS n FROM cp.proposals WHERE cluster_id = %s"
+            " AND state IN ('PROPOSED', 'VERIFYING', 'APPROVED', 'CANARY', 'ROLLBACK_REQUESTED')", (cluster_id,))
+        if (await cur.fetchone())["n"]:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                "a change to this cluster is still being verified or applied; wait for it to finish")
+        cur = await conn.execute(
+            "UPDATE cp.clusters SET status = 'RETIRED', primary_host = NULL, primary_port = NULL WHERE id = %s RETURNING *",
+            (cluster_id,))
+        row = await cur.fetchone()
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "cluster not found")
+        return row
+
+
 @router.get("/tenants", response_model=list[TenantOut])
 async def list_tenants(
     cluster_id: UUID | None = Query(default=None), principal: Principal = Depends(require_role("VIEWER"))

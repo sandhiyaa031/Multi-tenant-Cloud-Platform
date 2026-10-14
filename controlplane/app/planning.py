@@ -29,10 +29,24 @@ def pairs_needed(pair_ratios: list[float], limit: float, comparisons: int, famil
     out = {"pairs": len(logs), "sd_log": round(sd, 4), "limit": limit}
     if mean >= math.log(limit):
         return {**out, "reachable": False, "needed": None}
-    for n in range(2, MAX_PAIRS + 1):
+    target = math.log(limit)
+
+    def enough(n: int) -> bool:
         alpha = family_alpha / (n * max(1, comparisons))
-        if mean + t_quantile(1 - alpha / 2, n - 1) * sd / math.sqrt(n) <= math.log(limit):
-            return {**out, "reachable": True, "needed": n}
+        return mean + t_quantile(1 - alpha / 2, n - 1) * sd / math.sqrt(n) <= target
+
+    # The upper end of the interval falls as pairs are added, so look first at a coarse ladder of
+    # sizes, then step through the one stretch that holds the answer. Each evaluation of the
+    # t quantile costs about a millisecond, and a full scan to MAX_PAIRS for each of a verdict's
+    # keys made one page request take seconds.
+    ladder = [n for n in (2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48, 64, 80, 96, 128, 160, 192, 256, 320, 400) if n < MAX_PAIRS] + [MAX_PAIRS]
+    previous = 1
+    for rung in ladder:
+        if enough(rung):
+            for n in range(previous + 1, rung + 1):
+                if enough(n):
+                    return {**out, "reachable": True, "needed": n}
+        previous = rung
     return {**out, "reachable": True, "needed": None}   # more than MAX_PAIRS
 
 

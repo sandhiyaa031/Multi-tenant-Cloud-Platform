@@ -15,6 +15,7 @@ export interface PublicConfig { signup_enabled: boolean; mail_delivery: boolean 
 export type Role = "VIEWER" | "OPERATOR" | "ADMIN";
 export interface Org { id: string; slug: string; name: string; role: Role }
 export interface Session { access_token: string; org: Org; orgs: Org[] }
+export interface OrgSummary { id: string; slug: string; name: string; role: Role; created_at: string; members: number; clusters: number; tenants: number; current: boolean }
 export interface Cluster { id: string; name: string; status: string; pooler_host: string; pooler_port: number; database_name: string; primary_host: string | null }
 export interface Tenant { id: string; cluster_id: string; name: string; db_role: string; warehouse_lo: number; warehouse_hi: number; profile: string }
 export interface Proposal {

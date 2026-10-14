@@ -1,9 +1,12 @@
 """Reading aids: how many pairs a verdict would have needed, and how often the canary's rule
 fires on telemetry in which nothing changed."""
 import math
+import statistics
 from datetime import datetime, timedelta, timezone
 
-from app.planning import canary_false_alarms, pairs_needed, twin_planning
+import pytest
+
+from app.planning import MAX_PAIRS, canary_false_alarms, pairs_needed, twin_planning
 from dbpilot_core.gate import t_quantile
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -31,6 +34,31 @@ def test_the_estimate_satisfies_the_gates_own_condition_and_one_pair_fewer_does_
         return mean + t_quantile(1 - 0.05 / (n * 5) / 2, n - 1) * got["sd_log"] / math.sqrt(n)
 
     assert upper(got["needed"]) <= math.log(1.05) < upper(got["needed"] - 1)
+
+
+def _brute_force(ratios, limit, comparisons):
+    logs = [math.log(r) for r in ratios]
+    mean, sd = sum(logs) / len(logs), statistics.stdev(logs)
+    for n in range(2, MAX_PAIRS + 1):
+        if mean + t_quantile(1 - 0.05 / (n * comparisons) / 2, n - 1) * sd / math.sqrt(n) <= math.log(limit):
+            return n
+    return None
+
+
+@pytest.mark.parametrize("ratios", [
+    [0.95, 1.06, 0.99, 1.04, 0.93, 1.02, 1.07, 0.96], [1.000, 1.002, 0.999, 1.001], [0.90, 1.12, 0.95, 1.08],
+    [0.98, 1.01, 1.03, 0.97, 1.00], [0.80, 1.30, 0.70, 1.40, 0.90, 1.10], [1.0, 1.3, 0.8, 1.2, 0.9, 1.15, 0.85]])
+@pytest.mark.parametrize("comparisons", [1, 5])
+def test_the_fast_search_finds_exactly_what_a_scan_of_every_size_finds(ratios, comparisons):
+    assert pairs_needed(ratios, 1.05, comparisons)["needed"] == _brute_force(ratios, 1.05, comparisons)
+
+
+def test_the_estimate_is_fast_enough_to_sit_in_a_page_request():
+    import time
+    started = time.monotonic()
+    for _ in range(5):                                     # a verdict has about five keys
+        pairs_needed([0.8, 1.3, 0.7, 1.4, 0.9, 1.1, 1.2, 0.85], 1.05, 5)
+    assert time.monotonic() - started < 0.6
 
 
 def test_pairs_that_agree_need_few_and_noisier_pairs_need_more():

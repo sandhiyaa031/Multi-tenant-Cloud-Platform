@@ -1,6 +1,7 @@
 import { Fragment, useState } from "react";
-import { api, can, fmt, useApi, type PublicConfig, type Role } from "../api";
-import { useAuth, useCluster } from "../App";
+import { Link } from "react-router-dom";
+import { api, can, fmt, useApi, type Cluster, type OrgSummary, type PublicConfig, type Role, type Session } from "../api";
+import { useAuth } from "../App";
 import { Badge, Card, KeyValue, Load, PageHead } from "../ui";
 
 export function Audit() {
@@ -44,7 +45,9 @@ export function Audit() {
 
 export function Settings() {
   const { me } = useAuth();
-  const { clusters } = useCluster();
+  // Every cluster of the organization, retired ones too: retiring is how an organization becomes archivable.
+  const allClusters = useApi<Cluster[]>("/clusters");
+  const clusters = allClusters.data ?? [];
   const members = useApi<any[]>("/members");
   const admin = can(me?.org.role, "ADMIN");
   const [invite, setInvite] = useState({ email: "", full_name: "", role: "VIEWER" as Role });
@@ -115,10 +118,14 @@ export function Settings() {
       <Card title="Clusters">
         {clusters.length === 0 ? <div className="empty">No clusters registered.</div> : (
           <div className="table-wrap"><table>
-            <thead><tr><th>Name</th><th>Pooler</th><th>Database</th><th>Primary (observed by the collector)</th><th>Status</th></tr></thead>
+            <thead><tr><th>Name</th><th>Pooler</th><th>Database</th><th>Primary (observed by the collector)</th><th>Status</th><th /></tr></thead>
             <tbody>{clusters.map((c) => (
               <tr key={c.id}><td><strong>{c.name}</strong></td><td className="mono">{c.pooler_host}:{c.pooler_port}</td><td className="mono">{c.database_name}</td>
-                <td className="mono">{c.primary_host ?? <span className="muted">not set</span>}</td><td><Badge>{c.status}</Badge></td></tr>
+                <td className="mono">{c.primary_host ?? <span className="muted">not set</span>}</td><td><Badge>{c.status}</Badge></td>
+                <td>{admin && c.status !== "RETIRED" && (
+                  <button className="link" onClick={() => window.confirm(`Retire cluster ${c.name}? DBPilot stops observing it; its tenants, telemetry and proposals stay as history, and nothing on the data plane is touched.`)
+                    && api(`/clusters/${c.id}/retire`, { method: "POST" }).then(() => window.location.assign("/app/settings")).catch((e: Error) => setMessage({ ok: false, text: e.message }))}>Retire</button>
+                )}</td></tr>
             ))}</tbody>
           </table></div>
         )}
@@ -139,6 +146,101 @@ export function Settings() {
           </div>
         )}
       </Card>
+    </div>
+  );
+}
+
+// ── Organizations ────────────────────────────────────────────────────────────
+
+export function Organizations() {
+  const { me, signIn, refresh } = useAuth();
+  const orgs = useApi<OrgSummary[]>("/orgs");
+  const [name, setName] = useState("");
+  const [rename, setRename] = useState("");
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const config = useApi<PublicConfig>("/auth/config").data;
+  const current = orgs.data?.find((o) => o.current);
+  const admin = can(me?.org.role, "ADMIN");
+  const fail = (e: Error) => { setMessage({ ok: false, text: e.message }); setBusy(false); };
+  const switchTo = (slug: string) => api<Session>("/auth/switch-org", { method: "POST", body: { org_slug: slug } })
+    .then((s) => { signIn(s); localStorage.removeItem("dbpilot.cluster"); window.location.assign("/app/organizations"); }).catch(fail);
+  const create = () => { setBusy(true); api<OrgSummary>("/orgs", { method: "POST", body: { name } })
+    .then((o) => { setName(""); setBusy(false); setMessage({ ok: true, text: `Organization "${o.name}" was saved in the control-plane database (identifier ${o.slug}). You are its admin. It has no cluster and no tenant yet.` }); orgs.reload(); refresh(); })
+    .catch(fail); };
+  const save = () => { setBusy(true); api<OrgSummary>("/orgs/current", { method: "PATCH", body: { name: rename } })
+    .then((o) => { setRename(""); setBusy(false); setMessage({ ok: true, text: `Renamed to "${o.name}". The identifier ${o.slug} does not change.` }); orgs.reload(); refresh(); })
+    .catch(fail); };
+  const archive = () => window.confirm(`Archive ${current?.name}? Its history is kept, but nobody can sign in to it afterwards.`)
+    && api<Session>("/orgs/current", { method: "DELETE" })
+      .then((s) => { signIn(s); localStorage.removeItem("dbpilot.cluster"); window.location.assign("/app/organizations"); }).catch(fail);
+
+  const blocked = !current ? null
+    : current.clusters > 0 ? <>It still has {current.clusters} cluster{current.clusters === 1 ? "" : "s"}; retire {current.clusters === 1 ? "it" : "them"} under <Link to="/app/settings">Settings</Link> first.</>
+    : (orgs.data?.length ?? 0) < 2 ? "It is your only organization; archiving it would leave you with no way in. Create or join another one first." : null;
+
+  return (
+    <div className="stack">
+      <PageHead title="Organizations">The customers of DBPilot, as opposed to the tenants inside a database cluster. Everything here is read from, and written to, the control-plane database through the API.</PageHead>
+      {message && <div className={message.ok ? "notice" : "error"} role={message.ok ? "status" : "alert"}>{message.text}</div>}
+
+      <Card title="How an organization relates to clusters and tenants" sub="the boundary is deliberate">
+        <div className="flow">
+          <div><strong>Organization</strong><div className="muted">a DBPilot customer: members with roles, an audit log, clusters</div></div>
+          <span className="arrow">→</span>
+          <div><strong>Cluster</strong><div className="muted">where one PostgreSQL deployment is, registered by an admin</div></div>
+          <span className="arrow">→</span>
+          <div><strong>Tenant</strong><div className="muted">a database role and warehouse range inside that cluster that DBPilot observes and protects</div></div>
+        </div>
+        <p className="secondary" style={{ marginTop: 12 }}>
+          Creating an organization writes rows in the control-plane database and nothing else. It does <strong>not</strong> create a cluster, a database role or a
+          tenant, and DBPilot never creates roles or databases on a data plane: registering a cluster or a tenant records where an existing one is. On this deployment the
+          only data plane that exists is the demo one.
+        </p>
+      </Card>
+
+      <Card title="Your organizations" sub="every organization your account belongs to; other customers' organizations are invisible to you by design">
+        <Load of={orgs} empty="You belong to no organization.">{(rows) => (
+          <div className="table-wrap"><table>
+            <thead><tr><th>Name</th><th>Identifier</th><th>Your role</th><th className="num">Members</th><th className="num">Clusters</th><th className="num">Tenants</th><th>Created</th><th /></tr></thead>
+            <tbody>{rows.map((o) => (
+              <tr key={o.id}>
+                <td><strong>{o.name}</strong> {o.current && <Badge tone="info">current</Badge>}</td>
+                <td className="mono">{o.slug}</td><td>{o.role.toLowerCase()}</td>
+                <td className="num">{o.members}</td><td className="num">{o.clusters}</td><td className="num">{o.tenants}</td>
+                <td className="muted">{fmt.datetime(o.created_at)}</td>
+                <td>{!o.current && <button className="link" onClick={() => switchTo(o.slug)}>Switch to it</button>}</td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+        )}</Load>
+      </Card>
+
+      <Card title="Create an organization" sub="you become its first admin">
+        {config && !config.signup_enabled ? <div className="notice">Creating organizations is switched off on this deployment.</div> : (
+          <div className="row">
+            <input aria-label="Organization name" placeholder="Organization name" value={name} onChange={(e) => setName(e.target.value)} style={{ width: 280 }} />
+            <button className="primary" disabled={busy || name.trim().length < 2} onClick={create}>Create organization</button>
+          </div>
+        )}
+      </Card>
+
+      {current && (
+        <Card title={`The current organization: ${current.name}`} sub={admin ? "admins may rename or archive it" : "only an admin may rename or archive it"}>
+          {admin ? (
+            <>
+              <div className="row">
+                <input aria-label="New name" placeholder="New name" value={rename} onChange={(e) => setRename(e.target.value)} style={{ width: 280 }} />
+                <button disabled={busy || rename.trim().length < 2} onClick={save}>Rename</button>
+              </div>
+              <div className="row" style={{ marginTop: 14 }}>
+                <button className="danger" disabled={!!blocked} onClick={archive}>Archive this organization</button>
+                <span className="secondary">{blocked ?? "Kept with its history; nobody can sign in to it afterwards. It is not deleted: the audit log is append-only."}</span>
+              </div>
+            </>
+          ) : <p className="secondary">You are a {current.role.toLowerCase()} here. Ask an admin to rename or archive it.</p>}
+        </Card>
+      )}
     </div>
   );
 }

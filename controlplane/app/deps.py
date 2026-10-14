@@ -38,6 +38,7 @@ async def get_principal(creds: HTTPAuthorizationCredentials | None = Depends(_be
             SELECT m.role::text AS role
             FROM cp.memberships m
             JOIN cp.users u ON u.id = m.user_id
+            JOIN cp.organizations o ON o.id = m.org_id AND o.archived_at IS NULL
             WHERE m.org_id = cp.current_org() AND m.user_id = cp.current_user_id() AND u.is_active
             """
         )
